@@ -14,6 +14,7 @@
 // v0.1.3 - Changed the schema slightly and added a Buffer for the data, and logging to the webpage
 // v0.1.4 - Bug fixes
 // v1.0.0 - Name change, own repo, and slowed dump of cached data...
+//          Added Reboot facility
 
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
@@ -29,7 +30,7 @@
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "014"
-#define CONFIG_VERSION_NAME "v1.0.0-alpha4"
+#define CONFIG_VERSION_NAME "v1.0.0-alpha7"
 // IotWebConf max lengths
 #define STRING_LEN 50
 #define NUMBER_LEN 32
@@ -148,6 +149,7 @@ void setup() {
   // IotWebConf -- Set up required URL handlers on the web server.
   server.on("/", handleRoot);
   server.on("/config", [] { iotWebConf.handleConfig(); });
+  server.on("/reboot", handleReboot);
   server.onNotFound([]() {
     iotWebConf.handleNotFound();
   });
@@ -163,10 +165,12 @@ void loop() {
     getNtpTime();
     iotWebConf.doLoop();
     // If we've got a valid time, get a sample, and send it to Elasticsearch
-    if (nowTime > prevTime) {
+    if (nowTime > prevTime && nowTime > 1582801000) {
+      // Retrieve and store the sample
       String dataSet = sample();
+      // Send it and store the result (should be 201)
       int httpCode = sendData(dataSet);
-      // If the storageBuffer has data, send it now
+      // If the storageBuffer has data that needs sending, send it now
       if (storageBuffer.size() != 0 && httpCode == 201) {
         debugOutput("WARN: Emptying thy buffer unto Elasticsearch - Size Left:" + (String)storageBuffer.size( ));
         for (int count = 0; count < 5 && storageBuffer.pop(dataSet) && httpCode == 201 ; count++) {
@@ -209,15 +213,17 @@ String sample() {
   }
   // Build the dataset to send
   String dataSet = " {\"@timestamp\":";
-  dataSet += String(nowTime);
+  dataSet += (String)nowTime;
   dataSet += ",\"pressure\":";
-  dataSet += String(pressure);
+  dataSet += (String)pressure;
   dataSet += ",\"temperature\":";
-  dataSet += String(temperature);
+  dataSet += (String)temperature;
   dataSet += ",\"humidity\":";
-  dataSet += String(humidity);
+  dataSet += (String)humidity;
+  dataSet += ",\"upTime\":";
+  dataSet += (String)millis();
   dataSet += ",\"errorState\": \"";
-  dataSet += errorState;
+  dataSet += (String)errorState;
   dataSet += "\",\"sensorName\":\"";
   dataSet += (String)iotWebConf.getThingName();
   dataSet += "\",\"firmwareVersion\":\"";
@@ -225,9 +231,9 @@ String sample() {
   dataSet += "\",\"environment\":\"";
   dataSet += (String)envForm;
   dataSet += "\",\"location\":\"";
-  dataSet += latForm;
+  dataSet += (String)latForm;
   dataSet += ",";
-  dataSet += lngForm;
+  dataSet += (String)lngForm;
   dataSet += "\"";
   dataSet += "}";
 
@@ -256,12 +262,12 @@ int sendData(String dataBundle) {
     if (httpCode == -1) {
       // Didn't get a valid response, so store this one till be get a connection back...
       storageBuffer.push(dataBundle);
-      debugOutput("WARN: Stored: " + dataBundle);
+      debugOutput("WARN: Stored: " + (String)storageBuffer.size() + " Dataset: " + dataBundle);
     }
   } else {
     // No connection?  No problem - store it...
     storageBuffer.push(dataBundle);
-    debugOutput("WARN: Stored: " + dataBundle);
+    debugOutput("WARN: Stored: " + (String)storageBuffer.size() + " Dataset: " + dataBundle);
   }
   return httpCode;
 }
@@ -274,6 +280,20 @@ void rollingLogBuffer(String line) {
   logBuffer.push(line);
 }
 
+
+void handleReboot()
+{
+  // -- Let IotWebConf test and handle captive portal requests.
+  if (iotWebConf.handleCaptivePortal())
+  {
+    // -- Captive portal request were already served.
+    return;
+  }
+  server.sendHeader("Location","/");       
+  server.send(303);    
+  delay(100);
+  ESP.restart();
+}
 /**
    Handle web requests to "/" path.
 */
@@ -287,8 +307,10 @@ void handleRoot()
   }
   String s = "<!DOCTYPE html><html lang='en'><head><meta http-equiv='refresh' content='60'><meta name='viewport' content='width=device-width, initial-scale=1, user-scalable=no'/>";
   s += "<title>" + (String)iotWebConf.getThingName() + " - WeatherStation - " + (String)CONFIG_VERSION_NAME + "</title></head><body>";
-  s += "<h1>" + (String)iotWebConf.getThingName() + " - WeatherStation - " + (String)CONFIG_VERSION_NAME + "</h2>";
-  s += "Current Settings";
+  s += "<h1>" + (String)iotWebConf.getThingName() + " - WeatherStation - " + (String)CONFIG_VERSION_NAME + "</h1>";
+  s += "<h2>Uptime:";
+  s += (String)millis();
+  s += "</h2><h2>Current Settings</h2>";
   s += "<ul>";
   s += "<p>";
   s += "<li>SensorName/Config AP: ";
@@ -308,14 +330,15 @@ void handleRoot()
   s += "</ul>";
   s += "<p>";
   s += "<p>";
-  s += "Go to <a href='config'>configure page</a> to change values.<br>";
+  s += "Click <a href='config'>Configure</a> to setup this unit.<br>";
+  s += "Click <a href='reboot'>Reboot</a> to reboot this unit.<br>";
   s += "<p><i>Connect pin " + (String) CONFIG_PIN + " to GND and Reset the board to reset the Configuration AP password to: " + (String)wifiInitialApPassword + "</i>";
   s += "<p>Offline storageBuffer Records in Storage:";
   s += storageBuffer.size();
   s += "<p>Last ";
   s += (String)logBuffer.size();
   s += " loglines:<br><code>";
-  for (int count = logBuffer.size() ; count >= 0 ; count--) {
+  for (int count = logBuffer.size() - 1 ; count >= 0 ; count--) {
     s += logBuffer[count];
     s += "<br>";
   }
