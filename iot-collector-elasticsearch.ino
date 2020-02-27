@@ -29,7 +29,7 @@
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "014"
-#define CONFIG_VERSION_NAME "v1.0.0-alpha3"
+#define CONFIG_VERSION_NAME "v1.0.0-alpha4"
 // IotWebConf max lengths
 #define STRING_LEN 50
 #define NUMBER_LEN 32
@@ -315,7 +315,7 @@ void handleRoot()
   s += "<p>Last ";
   s += (String)logBuffer.size();
   s += " loglines:<br><code>";
-  for (int count = 0 ; count < logBuffer.size(); count++) {
+  for (int count = logBuffer.size() ; count >= 0 ; count--) {
     s += logBuffer[count];
     s += "<br>";
   }
