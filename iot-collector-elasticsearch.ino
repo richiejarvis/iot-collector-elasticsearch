@@ -29,7 +29,7 @@
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "014"
-#define CONFIG_VERSION_NAME "v1.0.0"
+#define CONFIG_VERSION_NAME "v1.0.0-alpha3"
 // IotWebConf max lengths
 #define STRING_LEN 50
 #define NUMBER_LEN 32
@@ -161,6 +161,7 @@ void loop() {
   if (isConnected() || nowTime > 0) {
     // Check if we need a new NTP time
     getNtpTime();
+    iotWebConf.doLoop();
     // If we've got a valid time, get a sample, and send it to Elasticsearch
     if (nowTime > prevTime) {
       String dataSet = sample();
@@ -173,13 +174,15 @@ void loop() {
           // Pop the Queue until we can pop no more...
           debugOutput("WARN: Emptying thy buffer unto Elasticsearch - Size Left:" + (String)storageBuffer.size());
           httpCode = sendData(dataSet);
+          iotWebConf.doLoop();
         }
       }
     }
     // Store the last time we sent, so we can check when we need to do it again
     prevTime = nowTime;
   }
-  delay(200);
+  // I do not like this delay, but without it things become unresponsive...
+  delay(500);
 }
 
 boolean isConnected() {
