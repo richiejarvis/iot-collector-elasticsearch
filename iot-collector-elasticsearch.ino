@@ -30,7 +30,7 @@
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "014"
-#define CONFIG_VERSION_NAME "v1.0.0-alpha7"
+#define CONFIG_VERSION_NAME "v1.0.0-alpha10"
 // IotWebConf max lengths
 #define STRING_LEN 50
 #define NUMBER_LEN 32
@@ -158,14 +158,10 @@ void setup() {
 
 void loop() {
   iotWebConf.doLoop();
-  // Check for configuration changes
-  // Check if the wifi is connected
-  if (isConnected() || nowTime > 0) {
-    // Check if we need a new NTP time
-    getNtpTime();
-    iotWebConf.doLoop();
+  getNtpTime();
+  if (isConnected() || nowTime > 1582801000) {
     // If we've got a valid time, get a sample, and send it to Elasticsearch
-    if (nowTime > prevTime && nowTime > 1582801000) {
+    if (nowTime > prevTime) {
       // Retrieve and store the sample
       String dataSet = sample();
       // Send it and store the result (should be 201)
