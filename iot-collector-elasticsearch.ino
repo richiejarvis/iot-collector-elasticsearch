@@ -19,6 +19,11 @@
 //          Improved time storage to properly use time.h :)
 //          Added Heap size to metrics stored...
 
+// Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
+// A useful alternative to the Pin 12 to GND reset
+#define CONFIG_VERSION "014"
+#define CONFIG_VERSION_NAME "v1.0.0-alpha"
+
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
@@ -30,10 +35,7 @@
 #include <RingBuf.h>
 
 
-// Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
-// A useful alternative to the Pin 12 to GND reset
-#define CONFIG_VERSION "014"
-#define CONFIG_VERSION_NAME "v1.0.0-alpha19"
+
 // IotWebConf max lengths
 #define STRING_LEN 50
 #define NUMBER_LEN 32
@@ -84,6 +86,8 @@ String errorState = "NONE";
 RingBuf<String, 1200> storageBuffer;
 // Log store - only need 100 lines
 RingBuf<String, 100> logBuffer;
+
+long upTime = 0;
 // -- Callback method declarations.
 void configSaved();
 bool formValidator();
@@ -161,34 +165,36 @@ void setup() {
   url += "/";
   url += elasticIndexForm;
   url += "/_doc";
+  upTime = millis() / 1000;
   debugOutput("INFO: Initialisation completed");
 }
 
 //  This is where we do stuff again and again...
 void loop() {
+  upTime = millis() / 1000;
   iotWebConf.doLoop();
   // Get the real time via NTP for the first time
   // Or when the refresh timer expires
   // Don't try if not connected
-  if (isConnected() && nextNtpTime < time(NULL)) {
-    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  if (isConnected() && nextNtpTime < upTime) {
+    configTime(0, 0, ntpServer);
     if (!getLocalTime(&timeinfo))
     {
       debugOutput("ERROR: Cannot connect to NTP server");
     } else {
       debugOutput("INFO: NTP Server Time Now: " + (String)time(NULL));
-      nextNtpTime = time(NULL) + ntpServerRefresh ;
+      nextNtpTime = upTime + ntpServerRefresh ;
     }
   }
-  if (nextNtpTime > 0 && prevTime != time(NULL)) {
-    sample();
     if (isConnected()) {
       sendData();
     }
+  if (nextNtpTime > 0 && prevTime != upTime) {
+    sample();
   }
-  prevTime = time(NULL);
+  prevTime = upTime;
 
-  delay(500);
+  delay(100);
 
 }
 
@@ -227,10 +233,10 @@ void sample() {
   dataSet += (String)temperature;
   dataSet += ",\"humidity\":";
   dataSet += (String)humidity;
-  dataSet += ",\"heapUsage\":";
+  dataSet += ",\"freeHeap\":";
   dataSet += (String)ESP.getFreeHeap();
   dataSet += ",\"upTime\":";
-  dataSet += (String)millis();
+  dataSet += (String)upTime;
   dataSet += ",\"errorState\": \"";
   dataSet += (String)errorState;
   dataSet += "\",\"sensorName\":\"";
@@ -251,8 +257,9 @@ void sample() {
 void sendData() {
   int httpCode = 0;
   String dataBundle = "";
-  while (storageBuffer.lockedPop(dataBundle) && isConnected() && httpCode >= 0);
+  if (storageBuffer.lockedPop(dataBundle) && isConnected() && httpCode >= 0)
   {
+    iotWebConf.doLoop();
     http.begin(url);
     http.addHeader("Content-Type", "application/json");
     httpCode = http.POST(dataBundle);
@@ -269,9 +276,9 @@ void sendData() {
 void rollingLogBuffer(String line) {
   if (logBuffer.size() >= 100) {
     String throwAway = "";
-    logBuffer.pop(throwAway);
+    logBuffer.lockedPop(throwAway);
   }
-  logBuffer.push(line);
+  logBuffer.lockedPush(line);
 }
 
 
@@ -303,7 +310,9 @@ void handleRoot()
   s += "<title>" + (String)iotWebConf.getThingName() + " - WeatherStation - " + (String)CONFIG_VERSION_NAME + "</title></head><body>";
   s += "<h1>" + (String)iotWebConf.getThingName() + " - WeatherStation - " + (String)CONFIG_VERSION_NAME + "</h1>";
   s += "<h2>Uptime:";
-  s += (String)millis();
+  s += (String)upTime;
+  s += "<h2>Free Heap:";
+  s += (String)ESP.getFreeHeap();
   s += "</h2><h2>Current Settings</h2>";
   s += "<ul>";
   s += "<p>";
@@ -365,7 +374,7 @@ bool formValidator()
 // Simple output...
 void debugOutput(String textToSend)
 {
-  String text = "t:" + (String)time(NULL) + ":" + textToSend;
+  String text = "t:" + (String)upTime + ":" + textToSend;
   Serial.println(text);
   rollingLogBuffer(text);
 }
