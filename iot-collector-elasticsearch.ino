@@ -33,7 +33,7 @@
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "014"
-#define CONFIG_VERSION_NAME "v1.0.0-alpha15"
+#define CONFIG_VERSION_NAME "v1.0.0-alpha19"
 // IotWebConf max lengths
 #define STRING_LEN 50
 #define NUMBER_LEN 32
@@ -182,7 +182,7 @@ void loop() {
   }
   if (nextNtpTime > 0 && prevTime != time(NULL)) {
     sample();
-    if (isConnected) {
+    if (isConnected()) {
       sendData();
     }
   }
