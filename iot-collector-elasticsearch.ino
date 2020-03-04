@@ -15,9 +15,6 @@
 // v0.1.4 - Bug fixes
 // v1.0.0 - Name change, own repo, and slowed dump of cached data...
 //          Added Reboot facility
-//          Reversed log display in webpage
-//          Improved time storage to properly use time.h :)
-//
 
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
@@ -33,7 +30,7 @@
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "014"
-#define CONFIG_VERSION_NAME "v1.0.0-alpha14"
+#define CONFIG_VERSION_NAME "v1.0.0-alpha10"
 // IotWebConf max lengths
 #define STRING_LEN 50
 #define NUMBER_LEN 32
@@ -56,7 +53,7 @@ Adafruit_Sensor *bme_humidity = bme.getHumiditySensor();
 const long  gmtOffset_sec = 0;
 const int   daylightOffset_sec = 0;
 const char thingName[] = "WeatherSensor";
-const char wifiInitialApPassword[] = "sensor";
+const char wifiInitialApPassword[] = "WeatherSensor";
 const char* ntpServer = "pool.ntp.org";
 // This is the time in seconds between NTP server checks
 // 3600 is every hour, which seems reasonable
@@ -76,9 +73,17 @@ char elasticIndexForm[STRING_LEN] = "weather-alias";
 char latForm[NUMBER_LEN] = "50.0";
 char lngForm[NUMBER_LEN] = "0.0";
 char envForm[STRING_LEN] = "indoor";
-struct tm timeinfo;
-long nextNtpTime = 0;
+// Here are my vars.  Kind being a bit lazy not passing stuff between functions, but hey-ho!
+// These are used to work out the time since we last
+// got the real time from the NTP server
+//
+long secondsSinceLastCheck = 0;
+long lastReadClock = 0;
+long lastNtpTimeRead = 0;
+// Store the current and previous time - if different (i.e. the second has changed), get a new reading.
+long nowTime = 0;
 long prevTime = 0;
+boolean ntpSuccess = false;
 String errorState = "NONE";
 // Store data that is not sent for later delivery
 RingBuf<String, 1200> storageBuffer;
@@ -91,7 +96,6 @@ bool formValidator();
 HTTPClient http;
 DNSServer dnsServer;
 HTTPUpdateServer httpUpdater;
-String url = "";
 WebServer server(80);
 // Setup the Form Value to Parameter
 IotWebConf iotWebConf(iwcThingName, &dnsServer, &server, wifiInitialApPassword, CONFIG_VERSION);
@@ -105,15 +109,13 @@ IotWebConfParameter latValue = IotWebConfParameter("Decimal Longitude", "latValu
 IotWebConfParameter lngValue = IotWebConfParameter("Decimal Latitude", "lngValue", lngForm, NUMBER_LEN, "number", "e.g. -23.712", NULL, "step='0.001'");
 IotWebConfParameter environment = IotWebConfParameter("Environment Type (indoor/outdoor)", "environment", envForm, STRING_LEN);
 
-TaskHandle_t sampleReadings;
-
 // Setup everything...
 void setup() {
   Serial.begin(115200);
   debugOutput("INFO: Starting WeatherSensor " + (String)CONFIG_VERSION_NAME);
   // Initialise IotWebConf
   iotWebConf.setStatusPin(STATUS_PIN);
-  //  iotWebConf.setConfigPin(CONFIG_PIN);
+  iotWebConf.setConfigPin(CONFIG_PIN);
   iotWebConf.addParameter(&elasticPrefix);
   iotWebConf.addParameter(&elasticUsername);
   iotWebConf.addParameter(&elasticPass);
@@ -151,163 +153,127 @@ void setup() {
   server.onNotFound([]() {
     iotWebConf.handleNotFound();
   });
-  buildUrlString();
-  //  xTaskCreate(
-  //    sampleReadingsCode,   /* Task function. */
-  //    "sampleReadings",     /* name of task. */
-  //    10000,           /* Stack size of task */
-  //    NULL,            /* parameter of the task */
-  //    1,               /* priority of the task */
-  //    &sampleReadings /* Task handle to keep track of created task */
-  //  );
-
-  xTaskCreatePinnedToCore(
-    sampleReadingsCode,   /* Task function. */
-    "sampleReadings",     /* name of task. */
-    10000,           /* Stack size of task */
-    NULL,            /* parameter of the task */
-    1,               /* priority of the task */
-    &sampleReadings, /* Task handle to keep track of created task */
-    0                /* pin task to core 0 */
-  );
-
   debugOutput("INFO: Initialisation completed");
 }
 
-void buildUrlString() {
-  // Build the URL to send the JSON structure to
-  url = elasticPrefixForm;
-  url += elasticUsernameForm;
-  url += ":";
-  url += elasticPassForm;
-  url += "@";
-  url += elasticHostForm;
-  url += ":";
-  url += elasticPortForm;
-  url += "/";
-  url += elasticIndexForm;
-  url += "/_doc";
-}
-
-//  This is where we do stuff again and again...
 void loop() {
   iotWebConf.doLoop();
-  // Get the real time via NTP for the first time
-  // Or when the refresh timer expires
-  // Don't try if not connected
-  if (isConnected()) {
-    if (nextNtpTime < time(NULL)) {
-      configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-      if (!getLocalTime(&timeinfo))
-      {
-        debugOutput("ERROR: Cannot connect to NTP server");
-      } else {
-        debugOutput("INFO: NTP Server Time Now: " + (String)time(NULL));
-        nextNtpTime = time(NULL) + ntpServerRefresh ;
-      }
-    }
-    int httpCode = 0;
-    String dataSet = "";
-    boolean sendWorked = true;
-    while (storageBuffer.lockedPop(dataSet) && sendWorked) {
-      http.begin(url);
-      http.addHeader("Content-Type", "application/json");
-      httpCode = http.POST(dataSet);
-      if (httpCode > 200 && httpCode < 299) {
-        debugOutput("INFO: waiting:" + (String)storageBuffer.size() + " sent:" + (String)httpCode + ":" + dataSet);
-        sendWorked = true;
-      } else {
-        pushDataSet(dataSet);
-        debugOutput("ERROR:" + (String)httpCode + ":" + http.errorToString(httpCode).c_str());
-        sendWorked = false;
-      }
-      http.end();
-      iotWebConf.doLoop();
-      delay(100);
-    }
-  }
-  iotWebConf.doLoop();
-  delay(200);
-}
-
-void sampleReadingsCode( void * pvParameters ) {
-  while (true) {
-    if (nextNtpTime > 0 && prevTime < time(NULL)) {
-      // Start a sample
-      sensors_event_t temp_event, pressure_event, humidity_event;
-      bme_temp->getEvent(&temp_event);
-      bme_pressure->getEvent(&pressure_event);
-      bme_humidity->getEvent(&humidity_event);
-      // Store the values from the BME280 in local vars
-      float temperature = temp_event.temperature;
-      float humidity = humidity_event.relative_humidity;
-      float pressure = pressure_event.pressure;
-      // Store whether the sensor was connected
-      // Sanity check to make sure we are not underwater, or in space!
-      if (temperature < -40.00) {
-        errorState = "ERROR: TEMPERATURE SENSOR MISREAD";
-        if (pressure > 1100.00) {
-          errorState = "ERROR: PRESSURE SENSOR MISREAD";
+  getNtpTime();
+  if (isConnected() || nowTime > 1582801000) {
+    // If we've got a valid time, get a sample, and send it to Elasticsearch
+    if (nowTime > prevTime) {
+      // Retrieve and store the sample
+      String dataSet = sample();
+      // Send it and store the result (should be 201)
+      int httpCode = sendData(dataSet);
+      // If the storageBuffer has data that needs sending, send it now
+      if (storageBuffer.size() != 0 && httpCode == 201) {
+        debugOutput("WARN: Emptying thy buffer unto Elasticsearch - Size Left:" + (String)storageBuffer.size( ));
+        for (int count = 0; count < 5 && storageBuffer.pop(dataSet) && httpCode == 201 ; count++) {
+          //        while (storageBuffer.pop(dataSet) && httpCode == 201) {
+          // Pop the Queue until we can pop no more...
+          debugOutput("WARN: Emptying thy buffer unto Elasticsearch - Size Left:" + (String)storageBuffer.size());
+          httpCode = sendData(dataSet);
+          iotWebConf.doLoop();
         }
       }
-      // Build the dataset to send
-      String dataSet = " {\"@timestamp\":";
-      dataSet += (String)time(NULL);
-      dataSet += ",\"pressure\":";
-      dataSet += (String)pressure;
-      dataSet += ",\"temperature\":";
-      dataSet += (String)temperature;
-      dataSet += ",\"humidity\":";
-      dataSet += (String)humidity;
-      dataSet += ",\"upTime\":";
-      dataSet += (String)millis();
-      dataSet += ",\"errorState\":\"";
-      dataSet += (String)errorState;
-      dataSet += "\",\"sensorName\":\"";
-      dataSet += (String)iotWebConf.getThingName();
-      dataSet += "\",\"firmwareVersion\":\"";
-      dataSet += (String)CONFIG_VERSION_NAME;
-      dataSet += "\",\"environment\":\"";
-      dataSet += (String)envForm;
-      dataSet += "\",\"location\":\"";
-      dataSet += (String)latForm;
-      dataSet += ",";
-      dataSet += (String)lngForm;
-      dataSet += "\"";
-      dataSet += "}";
-      pushDataSet(dataSet);
-      prevTime = time(NULL);
     }
-
-    delay(500);
-  }//  << End of infinite loop here
+    // Store the last time we sent, so we can check when we need to do it again
+    prevTime = nowTime;
+  }
+  // I do not like this delay, but without it things become unresponsive...
+  delay(500);
 }
-
 
 boolean isConnected() {
   return (iotWebConf.getState() == 4);
 }
 
-boolean pushDataSet(String dataSet) {
-  if (dataSet.length() > 0) {
-    if (storageBuffer.lockedPush(dataSet)) {
-      debugOutput("INFO: waiting:" + (String)storageBuffer.size() + " stored:  " + dataSet);
-      return true;
-    } else {
-      debugOutput("ERROR: Storage Failed!");
-      return false;
+String sample() {
+  // Start a sample
+  sensors_event_t temp_event, pressure_event, humidity_event;
+  bme_temp->getEvent(&temp_event);
+  bme_pressure->getEvent(&pressure_event);
+  bme_humidity->getEvent(&humidity_event);
+  // Store the values from the BME280 in local vars
+  float temperature = temp_event.temperature;
+  float humidity = humidity_event.relative_humidity;
+  float pressure = pressure_event.pressure;
+  // Store whether the sensor was connected
+  // Sanity check to make sure we are not underwater, or in space!
+  if (temperature < -40.00) {
+    errorState = "ERROR: TEMPERATURE SENSOR MISREAD";
+    if (pressure > 1100.00) {
+      errorState = "ERROR: PRESSURE SENSOR MISREAD";
+    }
+  }
+  // Build the dataset to send
+  String dataSet = " {\"@timestamp\":";
+  dataSet += (String)nowTime;
+  dataSet += ",\"pressure\":";
+  dataSet += (String)pressure;
+  dataSet += ",\"temperature\":";
+  dataSet += (String)temperature;
+  dataSet += ",\"humidity\":";
+  dataSet += (String)humidity;
+  dataSet += ",\"upTime\":";
+  dataSet += (String)millis();
+  dataSet += ",\"errorState\": \"";
+  dataSet += (String)errorState;
+  dataSet += "\",\"sensorName\":\"";
+  dataSet += (String)iotWebConf.getThingName();
+  dataSet += "\",\"firmwareVersion\":\"";
+  dataSet += (String)CONFIG_VERSION_NAME;
+  dataSet += "\",\"environment\":\"";
+  dataSet += (String)envForm;
+  dataSet += "\",\"location\":\"";
+  dataSet += (String)latForm;
+  dataSet += ",";
+  dataSet += (String)lngForm;
+  dataSet += "\"";
+  dataSet += "}";
+
+  return dataSet;
+}
+
+int sendData(String dataBundle) {
+  int httpCode = 0;
+  if (isConnected()) {
+    // Build the URL to send the JSON structure to
+    String url = elasticPrefixForm;
+    url += elasticUsernameForm;
+    url += ":";
+    url += elasticPassForm;
+    url += "@";
+    url += elasticHostForm;
+    url += ":";
+    url += elasticPortForm;
+    url += "/";
+    url += elasticIndexForm;
+    url += "/_doc";
+    http.begin(url);
+    http.addHeader("Content-Type", "application/json");
+    httpCode = http.POST(dataBundle);
+    debugOutput("INFO: Status: " + String(httpCode) + " Sent: " + dataBundle);
+    if (httpCode == -1) {
+      // Didn't get a valid response, so store this one till be get a connection back...
+      storageBuffer.push(dataBundle);
+      debugOutput("WARN: Stored: " + (String)storageBuffer.size() + " Dataset: " + dataBundle);
     }
   } else {
-    return false;
+    // No connection?  No problem - store it...
+    storageBuffer.push(dataBundle);
+    debugOutput("WARN: Stored: " + (String)storageBuffer.size() + " Dataset: " + dataBundle);
   }
+  return httpCode;
 }
 
 void rollingLogBuffer(String line) {
   if (logBuffer.size() >= 100) {
     String throwAway = "";
-    logBuffer.lockedPop(throwAway);
+    logBuffer.pop(throwAway);
   }
-  logBuffer.lockedPush(line);
+  logBuffer.push(line);
 }
 
 
@@ -319,8 +285,8 @@ void handleReboot()
     // -- Captive portal request were already served.
     return;
   }
-  server.sendHeader("Location", "/");
-  server.send(303);
+  server.sendHeader("Location","/");       
+  server.send(303);    
   delay(100);
   ESP.restart();
 }
@@ -379,7 +345,6 @@ void handleRoot()
 
 void configSaved()
 {
-  buildUrlString();
   debugOutput("INFO: Configuration was updated.");
 }
 
@@ -398,11 +363,38 @@ bool formValidator()
   return valid;
 }
 
+void getNtpTime()
+{
+  // Get the real time via NTP for the first time
+  // Or when the refresh timer expires
+  // Don't try if not connected, but keep advancing the time!
+  if (isConnected() && (!ntpSuccess || secondsSinceLastCheck >= ntpServerRefresh)) {
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+    time_t now;
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo))
+    {
+      debugOutput("ERROR: Cannot connect to NTP server");
+      ntpSuccess = false;
+    } else {
+      nowTime = time(&now);
+      lastNtpTimeRead = nowTime;
+      lastReadClock = millis() / 1000;
+      debugOutput("INFO: NTP Server Time Now: " + (String)nowTime);
+      ntpSuccess = true;
+      secondsSinceLastCheck = 0;
+    }
+  }
+
+  //How do we set nowTime to the current time?  We need to know how many seconds have elasped since the last ntp store.
+  secondsSinceLastCheck = (millis() / 1000) - lastReadClock;
+  nowTime = lastNtpTimeRead + secondsSinceLastCheck;
+}
 
 // Simple output...
 void debugOutput(String textToSend)
 {
-  String text = "t:" + (String)time(NULL) + ":" + textToSend;
+  String text = "t:" + (String)nowTime + ":" + textToSend;
   Serial.println(text);
   rollingLogBuffer(text);
 }
