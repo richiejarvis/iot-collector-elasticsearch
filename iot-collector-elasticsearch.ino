@@ -17,7 +17,7 @@
 //          Added Reboot facility
 //          Reversed log display in webpage
 //          Improved time storage to properly use time.h :)
-//
+//          Added Heap size to metrics stored...
 
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
@@ -33,7 +33,7 @@
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "014"
-#define CONFIG_VERSION_NAME "v1.0.0-alpha11"
+#define CONFIG_VERSION_NAME "v1.0.0-alpha15"
 // IotWebConf max lengths
 #define STRING_LEN 50
 #define NUMBER_LEN 32
@@ -227,6 +227,8 @@ void sample() {
   dataSet += (String)temperature;
   dataSet += ",\"humidity\":";
   dataSet += (String)humidity;
+  dataSet += ",\"heapUsage\":";
+  dataSet += (String)ESP.getFreeHeap();
   dataSet += ",\"upTime\":";
   dataSet += (String)millis();
   dataSet += ",\"errorState\": \"";
