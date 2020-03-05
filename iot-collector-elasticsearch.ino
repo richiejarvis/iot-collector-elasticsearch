@@ -22,7 +22,7 @@
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "014"
-#define CONFIG_VERSION_NAME "v1.0.0-alpha"
+#define CONFIG_VERSION_NAME "v1.0.0.a"
 
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
@@ -369,7 +369,7 @@ bool formValidator()
   int countOfVars = server.args();
   debugOutput("INFO: Number of Variables Stored: " + String(countOfVars));
   // Check we have the right number of variables (14 at last count)
-  if (countOfVars == 14)
+  if (countOfVars != 15)
   {
     debugOutput("ERROR: Form validation failed");
     valid = false;
