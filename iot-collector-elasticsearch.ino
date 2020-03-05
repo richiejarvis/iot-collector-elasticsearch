@@ -55,14 +55,9 @@ Adafruit_Sensor *bme_humidity = bme.getHumiditySensor();
 
 // Here are my Variables
 // Constants
-const long  gmtOffset_sec = 0;
-const int   daylightOffset_sec = 0;
 const char thingName[] = "WeatherSensor";
 const char wifiInitialApPassword[] = "WeatherSensor";
 const char* ntpServer = "pool.ntp.org";
-// This is the time in seconds between NTP server checks
-// 3600 is every hour, which seems reasonable
-const int ntpServerRefresh = 3600;
 // Other Variables
 // I want to figure how to change the AP name to the one on the form.
 // The thingName[] appears in the form, but I cannot seem to get it out
@@ -83,7 +78,7 @@ long nextNtpTime = 0;
 long prevTime = 0;
 String errorState = "NONE";
 // Store data that is not sent for later delivery
-RingBuf<String, 300> storageBuffer;
+RingBuf<String, 400> storageBuffer;
 // Log store - only need 100 lines
 RingBuf<String, 20> logBuffer;
 
@@ -92,7 +87,7 @@ long upTime = 0;
 void configSaved();
 bool formValidator();
 // DNS and Webserver Initialisation
-HTTPClient http;
+    HTTPClient http;
 DNSServer dnsServer;
 HTTPUpdateServer httpUpdater;
 String url = "";
@@ -191,7 +186,7 @@ void loop() {
       debugOutput("ERROR: Cannot connect to NTP server");
     } else {
       debugOutput("INFO: NTP Server Time Now: " + (String)time(NULL));
-      nextNtpTime = upTime + ntpServerRefresh ;
+      nextNtpTime = upTime + 600 ;
     }
   }
 
@@ -267,6 +262,8 @@ void sendData() {
   String dataSet = "";
   if (storageBuffer.lockedPop(dataSet) && isConnected() && httpCode >= 0)
   {
+
+    http.setTimeout(1000);
     http.begin(url);
     http.addHeader("Content-Type", "application/json");
     httpCode = http.POST(dataSet);
@@ -274,7 +271,7 @@ void sendData() {
       debugOutput("INFO: waiting:" + (String)storageBuffer.size() + " status:" + (String)httpCode + " dataset: " + dataSet);
     } else {
       storageBuffer.lockedPush(dataSet);
-      debugOutput("ERROR:" + (String)httpCode + ":" + http.errorToString(httpCode).c_str()  + " waiting:" + (String)storageBuffer.size());
+      debugOutput("ERROR:" + (String)httpCode + ":" + http.errorToString(httpCode).c_str());
     }
     http.end();
   }
