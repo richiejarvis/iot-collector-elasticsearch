@@ -78,14 +78,14 @@ char elasticIndexForm[STRING_LEN] = "weather-alias";
 char latForm[NUMBER_LEN] = "50.0";
 char lngForm[NUMBER_LEN] = "0.0";
 char envForm[STRING_LEN] = "indoor";
-struct tm timeinfo;
+
 long nextNtpTime = 0;
 long prevTime = 0;
 String errorState = "NONE";
 // Store data that is not sent for later delivery
-RingBuf<String, 1200> storageBuffer;
+RingBuf<String, 300> storageBuffer;
 // Log store - only need 100 lines
-RingBuf<String, 100> logBuffer;
+RingBuf<String, 20> logBuffer;
 
 long upTime = 0;
 // -- Callback method declarations.
@@ -153,6 +153,14 @@ void setup() {
   server.onNotFound([]() {
     iotWebConf.handleNotFound();
   });
+  buildUrl();
+  upTime = millis() / 1000;
+  // Start a sample
+
+  debugOutput("INFO: Initialisation completed");
+}
+
+void buildUrl() {
   // Build the URL to send the JSON structure to
   url = elasticPrefixForm;
   url += elasticUsernameForm;
@@ -165,18 +173,18 @@ void setup() {
   url += "/";
   url += elasticIndexForm;
   url += "/_doc";
-  upTime = millis() / 1000;
-  debugOutput("INFO: Initialisation completed");
 }
 
 //  This is where we do stuff again and again...
 void loop() {
   upTime = millis() / 1000;
   iotWebConf.doLoop();
+
   // Get the real time via NTP for the first time
   // Or when the refresh timer expires
   // Don't try if not connected
   if (isConnected() && nextNtpTime < upTime) {
+    struct tm timeinfo;
     configTime(0, 0, ntpServer);
     if (!getLocalTime(&timeinfo))
     {
@@ -186,15 +194,16 @@ void loop() {
       nextNtpTime = upTime + ntpServerRefresh ;
     }
   }
-    if (isConnected()) {
-      sendData();
-    }
+
   if (nextNtpTime > 0 && prevTime != upTime) {
     sample();
   }
+  if (isConnected()) {
+    sendData();
+  }
   prevTime = upTime;
 
-  delay(100);
+  delay(200);
 
 }
 
@@ -206,8 +215,6 @@ boolean isConnected() {
 }
 
 void sample() {
-
-  // Start a sample
   sensors_event_t temp_event, pressure_event, humidity_event;
   bme_temp->getEvent(&temp_event);
   bme_pressure->getEvent(&pressure_event);
@@ -251,22 +258,22 @@ void sample() {
   dataSet += (String)lngForm;
   dataSet += "\"";
   dataSet += "}";
+  debugOutput("INFO: waiting:" + (String)storageBuffer.size() + ":" + dataSet);
   storageBuffer.lockedPush(dataSet);
 }
 
 void sendData() {
   int httpCode = 0;
-  String dataBundle = "";
-  if (storageBuffer.lockedPop(dataBundle) && isConnected() && httpCode >= 0)
+  String dataSet = "";
+  if (storageBuffer.lockedPop(dataSet) && isConnected() && httpCode >= 0)
   {
-    iotWebConf.doLoop();
     http.begin(url);
     http.addHeader("Content-Type", "application/json");
-    httpCode = http.POST(dataBundle);
+    httpCode = http.POST(dataSet);
     if (httpCode > 200 && httpCode < 299) {
-      debugOutput("INFO: waiting:" + (String)storageBuffer.size() + " status:" + (String)httpCode + " dataset: " + dataBundle);
+      debugOutput("INFO: waiting:" + (String)storageBuffer.size() + " status:" + (String)httpCode + " dataset: " + dataSet);
     } else {
-      storageBuffer.lockedPush(dataBundle);
+      storageBuffer.lockedPush(dataSet);
       debugOutput("ERROR:" + (String)httpCode + ":" + http.errorToString(httpCode).c_str()  + " waiting:" + (String)storageBuffer.size());
     }
     http.end();
@@ -274,7 +281,7 @@ void sendData() {
 }
 
 void rollingLogBuffer(String line) {
-  if (logBuffer.size() >= 100) {
+  if (logBuffer.isFull()) {
     String throwAway = "";
     logBuffer.lockedPop(throwAway);
   }
@@ -352,6 +359,7 @@ void handleRoot()
 
 void configSaved()
 {
+  buildUrl();
   debugOutput("INFO: Configuration was updated.");
 }
 
@@ -369,12 +377,10 @@ bool formValidator()
   // TODO: Add some validation of params here.
   return valid;
 }
-
-
-// Simple output...
+// Simple Logging Output...
 void debugOutput(String textToSend)
 {
-  String text = "t:" + (String)upTime + ":" + textToSend;
+  String text = "t:" + (String)upTime + ":m:" + (String)ESP.getFreeHeap() + ":" + textToSend;
   Serial.println(text);
   rollingLogBuffer(text);
 }
