@@ -22,7 +22,7 @@
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "014"
-#define CONFIG_VERSION_NAME "v1.0.0.a"
+#define CONFIG_VERSION_NAME "v1.0.0c"
 
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
@@ -78,7 +78,7 @@ long nextNtpTime = 0;
 long prevTime = 0;
 String errorState = "NONE";
 // Store data that is not sent for later delivery
-RingBuf<String, 400> storageBuffer;
+RingBuf<String, 100> storageBuffer;
 // Log store - only need 100 lines
 RingBuf<String, 20> logBuffer;
 
