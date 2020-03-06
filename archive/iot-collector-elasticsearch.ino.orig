@@ -19,11 +19,6 @@
 //          Improved time storage to properly use time.h :)
 //          Added Heap size to metrics stored...
 
-// Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
-// A useful alternative to the Pin 12 to GND reset
-#define CONFIG_VERSION "014"
-#define CONFIG_VERSION_NAME "v1.0.0d"
-
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
@@ -35,7 +30,10 @@
 #include <RingBuf.h>
 
 
-
+// Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
+// A useful alternative to the Pin 12 to GND reset
+#define CONFIG_VERSION "014"
+#define CONFIG_VERSION_NAME "v1.0.0-alpha15"
 // IotWebConf max lengths
 #define STRING_LEN 50
 #define NUMBER_LEN 32
@@ -55,9 +53,14 @@ Adafruit_Sensor *bme_humidity = bme.getHumiditySensor();
 
 // Here are my Variables
 // Constants
+const long  gmtOffset_sec = 0;
+const int   daylightOffset_sec = 0;
 const char thingName[] = "WeatherSensor";
 const char wifiInitialApPassword[] = "WeatherSensor";
 const char* ntpServer = "pool.ntp.org";
+// This is the time in seconds between NTP server checks
+// 3600 is every hour, which seems reasonable
+const int ntpServerRefresh = 3600;
 // Other Variables
 // I want to figure how to change the AP name to the one on the form.
 // The thingName[] appears in the form, but I cannot seem to get it out
@@ -73,16 +76,14 @@ char elasticIndexForm[STRING_LEN] = "weather-alias";
 char latForm[NUMBER_LEN] = "50.0";
 char lngForm[NUMBER_LEN] = "0.0";
 char envForm[STRING_LEN] = "indoor";
-
+struct tm timeinfo;
 long nextNtpTime = 0;
 long prevTime = 0;
 String errorState = "NONE";
 // Store data that is not sent for later delivery
-RingBuf<String, 100> storageBuffer;
+RingBuf<String, 1200> storageBuffer;
 // Log store - only need 100 lines
-RingBuf<String, 20> logBuffer;
-
-long upTime = 0;
+RingBuf<String, 100> logBuffer;
 // -- Callback method declarations.
 void configSaved();
 bool formValidator();
@@ -148,14 +149,6 @@ void setup() {
   server.onNotFound([]() {
     iotWebConf.handleNotFound();
   });
-  buildUrl();
-  upTime = millis() / 1000;
-  // Start a sample
-
-  debugOutput("INFO: Initialisation completed");
-}
-
-void buildUrl() {
   // Build the URL to send the JSON structure to
   url = elasticPrefixForm;
   url += elasticUsernameForm;
@@ -168,37 +161,34 @@ void buildUrl() {
   url += "/";
   url += elasticIndexForm;
   url += "/_doc";
+  debugOutput("INFO: Initialisation completed");
 }
 
 //  This is where we do stuff again and again...
 void loop() {
-  upTime = millis() / 1000;
   iotWebConf.doLoop();
-
   // Get the real time via NTP for the first time
   // Or when the refresh timer expires
   // Don't try if not connected
-  if (isConnected() && nextNtpTime < upTime) {
-    struct tm timeinfo;
-    configTime(0, 0, ntpServer);
+  if (isConnected() && nextNtpTime < time(NULL)) {
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
     if (!getLocalTime(&timeinfo))
     {
       debugOutput("ERROR: Cannot connect to NTP server");
     } else {
       debugOutput("INFO: NTP Server Time Now: " + (String)time(NULL));
-      nextNtpTime = upTime + 600 ;
+      nextNtpTime = time(NULL) + ntpServerRefresh ;
     }
   }
-
-  if (nextNtpTime > 0 && prevTime != upTime) {
+  if (nextNtpTime > 0 && prevTime != time(NULL)) {
     sample();
+    if (isConnected) {
+      sendData();
+    }
   }
-  if (isConnected()) {
-    sendData();
-  }
-  prevTime = upTime;
+  prevTime = time(NULL);
 
-  delay(200);
+  delay(500);
 
 }
 
@@ -210,6 +200,8 @@ boolean isConnected() {
 }
 
 void sample() {
+
+  // Start a sample
   sensors_event_t temp_event, pressure_event, humidity_event;
   bme_temp->getEvent(&temp_event);
   bme_pressure->getEvent(&pressure_event);
@@ -235,10 +227,10 @@ void sample() {
   dataSet += (String)temperature;
   dataSet += ",\"humidity\":";
   dataSet += (String)humidity;
-  dataSet += ",\"freeHeap\":";
+  dataSet += ",\"heapUsage\":";
   dataSet += (String)ESP.getFreeHeap();
   dataSet += ",\"upTime\":";
-  dataSet += (String)upTime;
+  dataSet += (String)millis();
   dataSet += ",\"errorState\": \"";
   dataSet += (String)errorState;
   dataSet += "\",\"sensorName\":\"";
@@ -253,36 +245,33 @@ void sample() {
   dataSet += (String)lngForm;
   dataSet += "\"";
   dataSet += "}";
-  debugOutput("INFO: waiting:" + (String)storageBuffer.size() + ":" + dataSet);
   storageBuffer.lockedPush(dataSet);
 }
 
 void sendData() {
   int httpCode = 0;
-  String dataSet = "";
-  if (storageBuffer.lockedPop(dataSet) && isConnected() && httpCode >= 0)
+  String dataBundle = "";
+  while (storageBuffer.lockedPop(dataBundle) && isConnected() && httpCode >= 0);
   {
-
-    http.setTimeout(1000);
     http.begin(url);
     http.addHeader("Content-Type", "application/json");
-    httpCode = http.POST(dataSet);
+    httpCode = http.POST(dataBundle);
     if (httpCode > 200 && httpCode < 299) {
-      debugOutput("INFO: waiting:" + (String)storageBuffer.size() + " status:" + (String)httpCode + " dataset: " + dataSet);
+      debugOutput("INFO: waiting:" + (String)storageBuffer.size() + " status:" + (String)httpCode + " dataset: " + dataBundle);
     } else {
-      storageBuffer.lockedPush(dataSet);
-      debugOutput("ERROR:" + (String)httpCode + ":" + http.errorToString(httpCode).c_str());
+      storageBuffer.lockedPush(dataBundle);
+      debugOutput("ERROR:" + (String)httpCode + ":" + http.errorToString(httpCode).c_str()  + " waiting:" + (String)storageBuffer.size());
     }
     http.end();
   }
 }
 
 void rollingLogBuffer(String line) {
-  if (logBuffer.isFull()) {
+  if (logBuffer.size() >= 100) {
     String throwAway = "";
-    logBuffer.lockedPop(throwAway);
+    logBuffer.pop(throwAway);
   }
-  logBuffer.lockedPush(line);
+  logBuffer.push(line);
 }
 
 
@@ -314,9 +303,7 @@ void handleRoot()
   s += "<title>" + (String)iotWebConf.getThingName() + " - WeatherStation - " + (String)CONFIG_VERSION_NAME + "</title></head><body>";
   s += "<h1>" + (String)iotWebConf.getThingName() + " - WeatherStation - " + (String)CONFIG_VERSION_NAME + "</h1>";
   s += "<h2>Uptime:";
-  s += (String)upTime;
-  s += "<h2>Free Heap:";
-  s += (String)ESP.getFreeHeap();
+  s += (String)millis();
   s += "</h2><h2>Current Settings</h2>";
   s += "<ul>";
   s += "<p>";
@@ -356,7 +343,6 @@ void handleRoot()
 
 void configSaved()
 {
-  buildUrl();
   debugOutput("INFO: Configuration was updated.");
 }
 
@@ -366,7 +352,7 @@ bool formValidator()
   int countOfVars = server.args();
   debugOutput("INFO: Number of Variables Stored: " + String(countOfVars));
   // Check we have the right number of variables (14 at last count)
-  if (countOfVars != 15)
+  if (countOfVars == 14)
   {
     debugOutput("ERROR: Form validation failed");
     valid = false;
@@ -375,10 +361,11 @@ bool formValidator()
   return valid;
 }
 
-// Simple Logging Output...
+
+// Simple output...
 void debugOutput(String textToSend)
 {
-  String text = "t:" + (String)upTime + ":m:" + (String)ESP.getFreeHeap() + ":" + textToSend;
+  String text = "t:" + (String)time(NULL) + ":" + textToSend;
   Serial.println(text);
   rollingLogBuffer(text);
 }
