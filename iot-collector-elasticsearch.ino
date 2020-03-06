@@ -87,7 +87,7 @@ long upTime = 0;
 void configSaved();
 bool formValidator();
 // DNS and Webserver Initialisation
-    HTTPClient http;
+HTTPClient http;
 DNSServer dnsServer;
 HTTPUpdateServer httpUpdater;
 String url = "";
@@ -374,6 +374,7 @@ bool formValidator()
   // TODO: Add some validation of params here.
   return valid;
 }
+
 // Simple Logging Output...
 void debugOutput(String textToSend)
 {
