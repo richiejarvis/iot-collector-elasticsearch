@@ -198,7 +198,7 @@ void loop() {
   }
   prevTime = upTime;
 
-  delay(200);
+  delay(50);
 
 }
 
