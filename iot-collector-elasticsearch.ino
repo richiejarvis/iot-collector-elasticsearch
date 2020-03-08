@@ -22,7 +22,7 @@
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "014"
-#define CONFIG_VERSION_NAME "v1.0.0d"
+#define CONFIG_VERSION_NAME "v1.0.0e"
 
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
