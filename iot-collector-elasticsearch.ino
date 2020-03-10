@@ -22,7 +22,7 @@
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "014"
-#define CONFIG_VERSION_NAME "v1.0.0"
+#define CONFIG_VERSION_NAME "v1.0.1b"
 
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
@@ -156,6 +156,7 @@ void setup() {
 }
 
 void buildUrl() {
+
   // Build the URL to send the JSON structure to
   url = elasticPrefixForm;
   url += elasticUsernameForm;
@@ -170,11 +171,11 @@ void buildUrl() {
   url += "/_doc";
 }
 
+String message = "";
 //  This is where we do stuff again and again...
 void loop() {
   upTime = millis() / 1000;
   iotWebConf.doLoop();
-
   // Get the real time via NTP for the first time
   // Or when the refresh timer expires
   // Don't try if not connected
@@ -192,13 +193,14 @@ void loop() {
 
   if (nextNtpTime > 0 && prevTime != upTime) {
     sample();
-  }
-  if (isConnected()) {
-    sendData();
+    message = sendData();
+    if (isConnected()) {
+      debugOutput(message);
+    }
   }
   prevTime = upTime;
 
-  delay(50);
+  delay(100);
 
 }
 
@@ -253,13 +255,13 @@ void sample() {
   dataSet += (String)lngForm;
   dataSet += "\"";
   dataSet += "}";
-  debugOutput("INFO: waiting:" + (String)storageBuffer.size() + ":" + dataSet);
   storageBuffer.lockedPush(dataSet);
 }
 
-void sendData() {
+String sendData() {
   int httpCode = 0;
-  String dataSet = "";
+  String dataSet;
+  String message = "ERROR: Failed to send...";
   if (storageBuffer.lockedPop(dataSet) && isConnected() && httpCode >= 0)
   {
 
@@ -268,13 +270,14 @@ void sendData() {
     http.addHeader("Content-Type", "application/json");
     httpCode = http.POST(dataSet);
     if (httpCode > 200 && httpCode < 299) {
-      debugOutput("INFO: waiting:" + (String)storageBuffer.size() + " status:" + (String)httpCode + " dataset: " + dataSet);
+      message = "INFO: waiting:" + (String)storageBuffer.size() + " status:" + (String)httpCode + " dataset: " + dataSet;
     } else {
       storageBuffer.lockedPush(dataSet);
-      debugOutput("ERROR:" + (String)httpCode + ":" + http.errorToString(httpCode).c_str());
+      message = "ERROR:" + (String)httpCode + ":" + http.errorToString(httpCode).c_str();
     }
     http.end();
   }
+  return message;
 }
 
 void rollingLogBuffer(String line) {
