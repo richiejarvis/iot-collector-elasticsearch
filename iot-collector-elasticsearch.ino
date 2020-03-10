@@ -18,11 +18,12 @@
 //          Reversed log display in webpage
 //          Improved time storage to properly use time.h :)
 //          Added Heap size to metrics stored...
+// v1.0.1 - Increased delay time to allow easier wifi access - this seems to work instead of using FreeRTOS Tasks
 
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "014"
-#define CONFIG_VERSION_NAME "v1.0.1b"
+#define CONFIG_VERSION_NAME "v1.0.1c"
 
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
@@ -172,6 +173,11 @@ void buildUrl() {
 }
 
 String message = "";
+
+
+
+
+
 //  This is where we do stuff again and again...
 void loop() {
   upTime = millis() / 1000;
@@ -190,18 +196,16 @@ void loop() {
       nextNtpTime = upTime + 600 ;
     }
   }
-
   if (nextNtpTime > 0 && prevTime != upTime) {
-    sample();
+    
+    storageBuffer.lockedPush(sample());
     message = sendData();
     if (isConnected()) {
       debugOutput(message);
     }
   }
   prevTime = upTime;
-
   delay(100);
-
 }
 
 
@@ -211,7 +215,9 @@ boolean isConnected() {
   return (iotWebConf.getState() == 4);
 }
 
-void sample() {
+
+String sample() {
+  errorState = "NONE";
   sensors_event_t temp_event, pressure_event, humidity_event;
   bme_temp->getEvent(&temp_event);
   bme_pressure->getEvent(&pressure_event);
@@ -229,7 +235,7 @@ void sample() {
     }
   }
   // Build the dataset to send
-  String dataSet = " {\"@timestamp\":";
+  String dataSet = "{\"@timestamp\":";
   dataSet += (String)time(NULL);
   dataSet += ",\"pressure\":";
   dataSet += (String)pressure;
@@ -255,12 +261,13 @@ void sample() {
   dataSet += (String)lngForm;
   dataSet += "\"";
   dataSet += "}";
-  storageBuffer.lockedPush(dataSet);
+  return dataSet;
+
 }
 
 String sendData() {
   int httpCode = 0;
-  String dataSet;
+  String dataSet = "";
   String message = "ERROR: Failed to send...";
   if (storageBuffer.lockedPop(dataSet) && isConnected() && httpCode >= 0)
   {
@@ -272,7 +279,7 @@ String sendData() {
     if (httpCode > 200 && httpCode < 299) {
       message = "INFO: waiting:" + (String)storageBuffer.size() + " status:" + (String)httpCode + " dataset: " + dataSet;
     } else {
-      storageBuffer.lockedPush(dataSet);
+      rollingStorageBuffer(dataSet);
       message = "ERROR:" + (String)httpCode + ":" + http.errorToString(httpCode).c_str();
     }
     http.end();
@@ -288,6 +295,13 @@ void rollingLogBuffer(String line) {
   logBuffer.lockedPush(line);
 }
 
+void rollingStorageBuffer(String line) {
+  if (storageBuffer.isFull()) {
+    String throwAway = "";
+    storageBuffer.lockedPop(throwAway);
+  }
+  storageBuffer.lockedPush(line);
+}
 
 void handleReboot()
 {
