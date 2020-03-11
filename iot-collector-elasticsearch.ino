@@ -18,12 +18,12 @@
 //          Reversed log display in webpage
 //          Improved time storage to properly use time.h :)
 //          Added Heap size to metrics stored...
-// v1.0.1 - Increased delay time to allow easier wifi access - this seems to work instead of using FreeRTOS Tasks
+// v1.0.1 - Removed delay
 
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
-#define CONFIG_VERSION "014"
-#define CONFIG_VERSION_NAME "v1.0.1c"
+#define CONFIG_VERSION "015"
+#define CONFIG_VERSION_NAME "v1.0.1f"
 
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
@@ -38,8 +38,8 @@
 
 
 // IotWebConf max lengths
-#define STRING_LEN 50
-#define NUMBER_LEN 32
+#define STRING_LEN 30
+#define NUMBER_LEN 8
 // IotWebConf -- When CONFIG_PIN is pulled to ground on startup, the Thing will use the initial
 //      password to build an AP. (E.g. in case of lost password)
 #define CONFIG_PIN 12
@@ -79,7 +79,7 @@ long nextNtpTime = 0;
 long prevTime = 0;
 String errorState = "NONE";
 // Store data that is not sent for later delivery
-RingBuf<String, 100> storageBuffer;
+RingBuf<String, 300> storageBuffer;
 // Log store - only need 100 lines
 RingBuf<String, 20> logBuffer;
 
@@ -92,6 +92,8 @@ HTTPClient http;
 DNSServer dnsServer;
 HTTPUpdateServer httpUpdater;
 String url = "";
+String message = "";
+
 WebServer server(80);
 // Setup the Form Value to Parameter
 IotWebConf iotWebConf(iwcThingName, &dnsServer, &server, wifiInitialApPassword, CONFIG_VERSION);
@@ -172,7 +174,6 @@ void buildUrl() {
   url += "/_doc";
 }
 
-String message = "";
 
 
 
@@ -180,36 +181,33 @@ String message = "";
 
 //  This is where we do stuff again and again...
 void loop() {
+  // This is to stop our sensor thread from running more than once per second
   upTime = millis() / 1000;
   iotWebConf.doLoop();
-  // Get the real time via NTP for the first time
-  // Or when the refresh timer expires
-  // Don't try if not connected
-  if (isConnected() && nextNtpTime < upTime) {
-    struct tm timeinfo;
-    configTime(0, 0, ntpServer);
-    if (!getLocalTime(&timeinfo))
-    {
-      debugOutput("ERROR: Cannot connect to NTP server");
-    } else {
-      debugOutput("INFO: NTP Server Time Now: " + (String)time(NULL));
-      nextNtpTime = upTime + 600 ;
+  if (prevTime != upTime) {
+    // Get the real time via NTP for the first time
+    // Or when the refresh timer expires
+    // Don't try if not connected
+    if (isConnected() && nextNtpTime < upTime) {
+      struct tm timeinfo;
+      configTime(0, 0, ntpServer);
+      if (!getLocalTime(&timeinfo))
+      {
+        debugOutput("ERROR: Cannot connect to NTP server");
+      } else {
+        debugOutput("INFO: NTP Server Time Now: " + (String)time(NULL));
+        nextNtpTime = upTime + 600 ;
+      }
     }
-  }
-  if (nextNtpTime > 0 && prevTime != upTime) {
-    
-    storageBuffer.lockedPush(sample());
-    message = sendData();
-    if (isConnected()) {
-      debugOutput(message);
+    if (nextNtpTime > 0 ) {
+      storageBuffer.lockedPush(sample());
+      if (sendData()) {
+        sendData();
+      }
     }
   }
   prevTime = upTime;
-  delay(100);
 }
-
-
-
 
 boolean isConnected() {
   return (iotWebConf.getState() == 4);
@@ -265,42 +263,31 @@ String sample() {
 
 }
 
-String sendData() {
+boolean sendData() {
+  boolean statusFlag = false;
   int httpCode = 0;
   String dataSet = "";
   String message = "ERROR: Failed to send...";
   if (storageBuffer.lockedPop(dataSet) && isConnected() && httpCode >= 0)
   {
-
     http.setTimeout(1000);
     http.begin(url);
     http.addHeader("Content-Type", "application/json");
     httpCode = http.POST(dataSet);
     if (httpCode > 200 && httpCode < 299) {
       message = "INFO: waiting:" + (String)storageBuffer.size() + " status:" + (String)httpCode + " dataset: " + dataSet;
+      statusFlag = true;
     } else {
-      rollingStorageBuffer(dataSet);
-      message = "ERROR:" + (String)httpCode + ":" + http.errorToString(httpCode).c_str();
+      storageBuffer.lockedPush(dataSet);
+      statusFlag = false;
+      message = "ERROR:" + (String)httpCode + ":" + http.errorToString(httpCode).c_str() + " dataset:" + dataSet;
     }
+    debugOutput(message);
     http.end();
+  } else {
+    statusFlag = false;
   }
-  return message;
-}
-
-void rollingLogBuffer(String line) {
-  if (logBuffer.isFull()) {
-    String throwAway = "";
-    logBuffer.lockedPop(throwAway);
-  }
-  logBuffer.lockedPush(line);
-}
-
-void rollingStorageBuffer(String line) {
-  if (storageBuffer.isFull()) {
-    String throwAway = "";
-    storageBuffer.lockedPop(throwAway);
-  }
-  storageBuffer.lockedPush(line);
+  return statusFlag;
 }
 
 void handleReboot()
@@ -395,7 +382,7 @@ bool formValidator()
 // Simple Logging Output...
 void debugOutput(String textToSend)
 {
-  String text = "t:" + (String)upTime + ":m:" + (String)ESP.getFreeHeap() + ":" + textToSend;
-  Serial.println(text);
-  rollingLogBuffer(text);
+  textToSend = "t:" + (String)upTime + ":m:" + (String)ESP.getFreeHeap() + ":" + textToSend;
+  Serial.println(textToSend);
+  logBuffer.lockedPush(textToSend);
 }
