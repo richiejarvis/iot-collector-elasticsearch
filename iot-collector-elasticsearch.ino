@@ -18,15 +18,12 @@
 //          Reversed log display in webpage
 //          Improved time storage to properly use time.h :)
 //          Added Heap size to metrics stored...
-// v1.0.1 - Removed delay
-//          Reduced buffer storage - now space for 20 minutes (@ 2 per second)
-//          Added sample refresh timer parameter
-
+// v1.0.1 - Increased delay time to allow easier wifi access - this seems to work instead of using FreeRTOS Tasks
 
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
-#define CONFIG_VERSION "015"
-#define CONFIG_VERSION_NAME "v1.0.1d"
+#define CONFIG_VERSION "014"
+#define CONFIG_VERSION_NAME "v1.0.1c"
 
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
@@ -38,9 +35,11 @@
 #include <HTTPClient.h>
 #include <RingBuf.h>
 
+
+
 // IotWebConf max lengths
-#define STRING_LEN 30
-#define NUMBER_LEN 8
+#define STRING_LEN 50
+#define NUMBER_LEN 32
 // IotWebConf -- When CONFIG_PIN is pulled to ground on startup, the Thing will use the initial
 //      password to build an AP. (E.g. in case of lost password)
 #define CONFIG_PIN 12
@@ -80,9 +79,9 @@ long nextNtpTime = 0;
 long prevTime = 0;
 String errorState = "NONE";
 // Store data that is not sent for later delivery
-RingBuf<String, 600> storageBuffer;
-// Log store
-RingBuf<String, 30> logBuffer;
+RingBuf<String, 100> storageBuffer;
+// Log store - only need 100 lines
+RingBuf<String, 20> logBuffer;
 
 long upTime = 0;
 // -- Callback method declarations.
@@ -93,9 +92,6 @@ HTTPClient http;
 DNSServer dnsServer;
 HTTPUpdateServer httpUpdater;
 String url = "";
-String message = "";
-int sampleRefreshTime = 2;
-
 WebServer server(80);
 // Setup the Form Value to Parameter
 IotWebConf iotWebConf(iwcThingName, &dnsServer, &server, wifiInitialApPassword, CONFIG_VERSION);
@@ -176,54 +172,49 @@ void buildUrl() {
   url += "/_doc";
 }
 
+String message = "";
+
+
+
+
+
 //  This is where we do stuff again and again...
 void loop() {
-  // Do WiFi
+  upTime = millis() / 1000;
   iotWebConf.doLoop();
-  // Send Queue
-  if (isConnected()) {
-    // Do this twice to clear the Q if the first send worked
-    if (sendData()) {
-      delay(10);
-      sendData();
-    }
-  }
-  // This is to stop our sensor sample from running more than once per second
-  //    upTime = millis() / 1000;
-  // Get a Sample
-  if (getNtpTime()) {
-    // This is to stop our sensor sample from running more than once per second
-    upTime = millis() / 1000;
-    if ((prevTime) < (upTime + sampleRefreshTime)) {
-      //      debugOutput("Prev:" + (String)prevTime + " upTime:" + (String)(upTime + sampleRefreshTime));
-      storageBuffer.lockedPush(sample());
-      debugOutput("INFO: Waiting: " + (String)storageBuffer.size());
-    }
-  }
-  // Make sure we do not check again for 1 second
-  prevTime = upTime + 2;
-}
-
-boolean getNtpTime() {
-  if (isConnected()) {
+  // Get the real time via NTP for the first time
+  // Or when the refresh timer expires
+  // Don't try if not connected
+  if (isConnected() && nextNtpTime < upTime) {
     struct tm timeinfo;
     configTime(0, 0, ntpServer);
     if (!getLocalTime(&timeinfo))
     {
       debugOutput("ERROR: Cannot connect to NTP server");
+    } else {
+      debugOutput("INFO: NTP Server Time Now: " + (String)time(NULL));
+      nextNtpTime = upTime + 600 ;
     }
-    nextNtpTime = upTime + 600 ;
   }
-  if (nextNtpTime == 0) {
-    return false;
-  } else {
-    return true;
+  if (nextNtpTime > 0 && prevTime != upTime) {
+    
+    storageBuffer.lockedPush(sample());
+    message = sendData();
+    if (isConnected()) {
+      debugOutput(message);
+    }
   }
+  prevTime = upTime;
+  delay(100);
 }
+
+
+
 
 boolean isConnected() {
   return (iotWebConf.getState() == 4);
 }
+
 
 String sample() {
   errorState = "NONE";
@@ -237,52 +228,79 @@ String sample() {
   float pressure = pressure_event.pressure;
   // Store whether the sensor was connected
   // Sanity check to make sure we are not underwater, or in space!
-  if (temperature <= -40.00 || temperature >= 100) {
-    debugOutput("ERROR: Temperature Misread");
-    if (pressure >= 1100.00 || pressure <= 300) {
-      debugOutput("ERROR: Pressure Misread");
+  if (temperature < -40.00) {
+    errorState = "ERROR: TEMPERATURE SENSOR MISREAD";
+    if (pressure > 1100.00) {
+      errorState = "ERROR: PRESSURE SENSOR MISREAD";
     }
   }
   // Build the dataset to send
-  String dataSet = "{\"@timestamp\":" + (String)time(NULL);
-  dataSet += ",\"pressure\":" + (String)pressure;
-  dataSet += ",\"temperature\":" + (String)temperature;
-  dataSet += ",\"humidity\":" + (String)humidity;
-  dataSet += ",\"freeHeap\":" + (String)ESP.getFreeHeap();
-  dataSet += ",\"upTime\":" + (String)upTime;
-  //  dataSet += ",\"errorState\": \"" + (String)errorState;
+  String dataSet = "{\"@timestamp\":";
+  dataSet += (String)time(NULL);
+  dataSet += ",\"pressure\":";
+  dataSet += (String)pressure;
+  dataSet += ",\"temperature\":";
+  dataSet += (String)temperature;
+  dataSet += ",\"humidity\":";
+  dataSet += (String)humidity;
+  dataSet += ",\"freeHeap\":";
+  dataSet += (String)ESP.getFreeHeap();
+  dataSet += ",\"upTime\":";
+  dataSet += (String)upTime;
+  dataSet += ",\"errorState\": \"";
+  dataSet += (String)errorState;
+  dataSet += "\",\"sensorName\":\"";
+  dataSet += (String)iotWebConf.getThingName();
+  dataSet += "\",\"firmwareVersion\":\"";
+  dataSet += (String)CONFIG_VERSION_NAME;
+  dataSet += "\",\"environment\":\"";
+  dataSet += (String)envForm;
+  dataSet += "\",\"location\":\"";
+  dataSet += (String)latForm;
+  dataSet += ",";
+  dataSet += (String)lngForm;
+  dataSet += "\"";
+  dataSet += "}";
   return dataSet;
+
 }
 
-boolean sendData() {
-  boolean statusFlag = false;
+String sendData() {
   int httpCode = 0;
   String dataSet = "";
-  String endDataSet = ",\"sensorName\":\"" + (String)iotWebConf.getThingName();
-  endDataSet += "\",\"firmwareVersion\":\"" + (String)CONFIG_VERSION_NAME;
-  endDataSet += "\",\"environment\":\"" + (String)envForm;
-  endDataSet += "\",\"location\":\"" + (String)latForm + "," + (String)lngForm + "\"}";
   String message = "ERROR: Failed to send...";
   if (storageBuffer.lockedPop(dataSet) && isConnected() && httpCode >= 0)
   {
+
     http.setTimeout(1000);
     http.begin(url);
     http.addHeader("Content-Type", "application/json");
-    httpCode = http.POST(dataSet + endDataSet);
+    httpCode = http.POST(dataSet);
     if (httpCode > 200 && httpCode < 299) {
-      message = "INFO: Status:" + (String)httpCode + " Sent: " + dataSet + endDataSet;
-      statusFlag = true;
+      message = "INFO: waiting:" + (String)storageBuffer.size() + " status:" + (String)httpCode + " dataset: " + dataSet;
     } else {
-      storageBuffer.lockedPush(dataSet);
-      statusFlag = false;
-      message = "ERROR:" + (String)httpCode + ":" + http.errorToString(httpCode).c_str() + " Data:" + dataSet + endDataSet;
+      rollingStorageBuffer(dataSet);
+      message = "ERROR:" + (String)httpCode + ":" + http.errorToString(httpCode).c_str();
     }
-    debugOutput(message);
     http.end();
-  } else {
-    statusFlag = false;
   }
-  return statusFlag;
+  return message;
+}
+
+void rollingLogBuffer(String line) {
+  if (logBuffer.isFull()) {
+    String throwAway = "";
+    logBuffer.lockedPop(throwAway);
+  }
+  logBuffer.lockedPush(line);
+}
+
+void rollingStorageBuffer(String line) {
+  if (storageBuffer.isFull()) {
+    String throwAway = "";
+    storageBuffer.lockedPop(throwAway);
+  }
+  storageBuffer.lockedPush(line);
 }
 
 void handleReboot()
@@ -377,7 +395,7 @@ bool formValidator()
 // Simple Logging Output...
 void debugOutput(String textToSend)
 {
-  textToSend = "t:" + (String)upTime + ":m:" + (String)ESP.getFreeHeap() + ":" + textToSend;
-  Serial.println(textToSend);
-  logBuffer.lockedPush(textToSend);
+  String text = "t:" + (String)upTime + ":m:" + (String)ESP.getFreeHeap() + ":" + textToSend;
+  Serial.println(text);
+  rollingLogBuffer(text);
 }
