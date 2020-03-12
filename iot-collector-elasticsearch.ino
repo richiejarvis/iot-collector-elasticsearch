@@ -19,7 +19,8 @@
 //          Improved time storage to properly use time.h :)
 //          Added Heap size to metrics stored...
 // v1.0.1 - Removed delay
-//          Reduced buffer storage - now space for 10 minutes (@ 1 per second)
+//          Reduced buffer storage - now space for 20 minutes (@ 2 per second)
+//          Added sample refresh timer parameter
 
 
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
@@ -93,6 +94,7 @@ DNSServer dnsServer;
 HTTPUpdateServer httpUpdater;
 String url = "";
 String message = "";
+int sampleRefreshTime = 2;
 
 WebServer server(80);
 // Setup the Form Value to Parameter
@@ -178,15 +180,6 @@ void buildUrl() {
 void loop() {
   // Do WiFi
   iotWebConf.doLoop();
-  // Get a Sample
-  if (getNtpTime()) {
-    // This is to stop our sensor thread from running more than once per second
-    upTime = millis() / 1000;
-    if (prevTime != upTime) {
-      storageBuffer.lockedPush(sample());
-      debugOutput("INFO: Waiting: " + (String)storageBuffer.size());
-    }
-  }
   // Send Queue
   if (isConnected()) {
     // Do this twice to clear the Q if the first send worked
@@ -195,8 +188,20 @@ void loop() {
       sendData();
     }
   }
+  // This is to stop our sensor sample from running more than once per second
+  //    upTime = millis() / 1000;
+  // Get a Sample
+  if (getNtpTime()) {
+    // This is to stop our sensor sample from running more than once per second
+    upTime = millis() / 1000;
+    if ((prevTime) < (upTime + sampleRefreshTime)) {
+      //      debugOutput("Prev:" + (String)prevTime + " upTime:" + (String)(upTime + sampleRefreshTime));
+      storageBuffer.lockedPush(sample());
+      debugOutput("INFO: Waiting: " + (String)storageBuffer.size());
+    }
+  }
   // Make sure we do not check again for 1 second
-  prevTime = upTime;
+  prevTime = upTime + 2;
 }
 
 boolean getNtpTime() {
