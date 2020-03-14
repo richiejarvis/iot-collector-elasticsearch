@@ -21,10 +21,11 @@
 // v1.0.1 - Removed delay time to allow easier wifi access
 //          Config Reset!
 
+
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "017"
-#define CONFIG_VERSION_NAME "v1.0.1k"
+#define CONFIG_VERSION_NAME "v1.0.1m"
 
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
@@ -172,7 +173,6 @@ void loop() {
       nextNtpTime = upTime + 600 ;
     }
   }
-
   // The meat of the reading and sending is here
   if (nextNtpTime > 0 && prevTime != upTime) {
     storeSample();
@@ -224,7 +224,7 @@ boolean storeSample() {
   dataSet += ",\"humidity\":";
   dataSet += (String)humidity;
   dataSet += ",\"freeHeap\":";
-  dataSet += (String)ESP.getFreeHeap();
+  dataSet += (String)(ESP.getFreeHeap()/1000);
   dataSet += ",\"upTime\":";
   dataSet += (String)upTime;
   dataSet += ",\"sensorName\":\"";
@@ -235,9 +235,7 @@ boolean storeSample() {
 }
 
 boolean sendData() {
-
   int httpCode = 0;
-  delay(10);
   String dataSet = "";
   if (storageBuffer.lockedPop(dataSet) && httpCode >= 0)
   {
@@ -253,7 +251,6 @@ boolean sendData() {
     dataSet += ",";
     dataSet += (String)lngForm;
     dataSet += "\"}";
-
     httpCode = http.POST(dataSet);
     if (httpCode > 200 && httpCode < 299) {
       debugOutput("INFO: waiting:" + (String)storageBuffer.size() + " status:" + (String)httpCode + " dataset: " + dataSet);
@@ -269,10 +266,18 @@ boolean sendData() {
 }
 
 void rollingLogBuffer(String line) {
+  String throwAway = "";
+  if (logBuffer.isFull()){
+    logBuffer.lockedPop(throwAway);
+  }
   logBuffer.lockedPush(line);
 }
 
 void rollingStorageBuffer(String line) {
+  String throwAway = "";
+  if (storageBuffer.isFull()){
+    storageBuffer.lockedPop(throwAway);
+  }
   storageBuffer.lockedPush(line);
 }
 
@@ -306,7 +311,7 @@ void handleRoot()
   s += "<h2>Uptime:";
   s += (String)upTime;
   s += "<h2>Free Heap:";
-  s += (String)ESP.getFreeHeap();
+  s += (String)(ESP.getFreeHeap()/1000);
   s += "</h2><h2>Current Settings</h2>";
   s += "<ul>";
   s += "<p>";
