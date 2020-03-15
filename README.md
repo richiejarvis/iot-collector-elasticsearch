@@ -10,8 +10,8 @@ A simple ESP8266 or ESP32 compatible piece of code to read a BME280 sensor data,
 2. Elasticsearch configuration parameters and WiFi are stored in flash on-chip once configured.
 2. Read from BME280 and compatible Temperature, Pressure and Humidity sensors via i2c
 3. Send JSON with the following Elasticsearch mapping definition (v0.1.3+)
-```
-{
+ ```
+ {
     "sensorName": "GB-RJ-Obsy1",
     "pressure": 1005.13,
     "freeHeap": 129,
@@ -26,8 +26,8 @@ A simple ESP8266 or ESP32 compatible piece of code to read a BME280 sensor data,
     "location": "50.965,-0.063",
     "firmwareVersion": "v1.0.1",
     "fahrenheit": 60.55
-}
-```
+ }
+ ```
 4. Data Buffering during connection outages
 5. Web UI with logging data
 6. 300 reading buffer
@@ -119,7 +119,9 @@ PUT _template/weathersensor_template
   }
 }
 ```
-I am using an Ingest Pipeline too:
+
+I am using an Ingest Pipeline:
+
 ```
 PUT _ingest/pipeline/weathersensor-add-fields2
 {
@@ -143,7 +145,9 @@ PUT _ingest/pipeline/weathersensor-add-fields2
   ]
 }
 ```
+
 and ILM:
+
 ```
 PUT _ilm/policy/weather-ilm2
 {
@@ -163,7 +167,9 @@ PUT _ilm/policy/weather-ilm2
       }
     }
   }
-}```
+}
+```
+
 ## Version History
 * v0.0.1 - Initial Release
 * v0.0.2 - Added ES params
@@ -191,7 +197,6 @@ Once the store is empty, everything goes back to normal.
 
 ### Logging on the Webpage
 I wanted to make the webpage more user-friendly, and report on the current status.  Here it is:
-
 
 
 
