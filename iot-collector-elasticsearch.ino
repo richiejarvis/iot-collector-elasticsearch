@@ -21,14 +21,14 @@
 // v1.0.1 - Removed delay time to allow easier wifi access
 //          Config Reset!
 //          5 minutes of buffer, and better workflow during connection failures
-//          Changed freeHeap to kB 
+//          Changed freeHeap to kB
 // v1.1.0 - Averaging of readings
 //          Reduce offline storage size to give more datapoints.
 
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "017"
-#define CONFIG_VERSION_NAME "v1.1.0a"
+#define CONFIG_VERSION_NAME "v1.1.0b"
 
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
@@ -81,7 +81,12 @@ char envForm[STRING_LEN] = "indoor";
 long nextNtpTime = 0;
 long prevTime = 0;
 // Store data that is not sent for later delivery
-RingBuf<String, 300> storageBuffer;
+
+// Storage Pressure, Humidity and raw values
+RingBuf<float, 300> pressBuffer;
+RingBuf<float, 300> humidBuffer;
+RingBuf<float, 300> tempBuffer;
+
 // Log store
 RingBuf<String, 20> logBuffer;
 
@@ -178,11 +183,12 @@ void loop() {
   }
   // The meat of the reading and sending is here
   if (nextNtpTime > 0 && prevTime != upTime) {
-    storeSample();
-    if (isConnected()) {
-      if (sendData()) {
-        delay(20);
-        sendData();
+    if (storeSample()) {
+      if (isConnected()) {
+        if (sendData()) {
+          delay(20);
+          sendData();
+        }
       }
     }
   }
@@ -199,6 +205,7 @@ boolean isConnected() {
 
 
 boolean storeSample() {
+  boolean status = false;
   sensors_event_t temp_event, pressure_event, humidity_event;
   bme_temp->getEvent(&temp_event);
   bme_pressure->getEvent(&pressure_event);
@@ -214,35 +221,40 @@ boolean storeSample() {
     if (pressure > 1100.00 || pressure < 300.00) {
       debugOutput("ERROR: Sensor Failure");
     }
-    return false;
+    status = false;
   }
-  // Build the dataset to send
-  String dataSet = "{\"@timestamp\":";
-  dataSet += (String)time(NULL);
-  dataSet += ",\"pressure\":";
-  dataSet += (String)pressure;
-  dataSet += ",\"temperature\":";
-  dataSet += (String)temperature;
-  dataSet += ",\"humidity\":";
-  dataSet += (String)humidity;
-  dataSet += ",\"freeHeap\":";
-  dataSet += (String)(ESP.getFreeHeap()/1000);
-  dataSet += ",\"upTime\":";
-  dataSet += (String)upTime;
-  dataSet += ",\"sensorName\":\"";
-  if (rollingStorageBuffer(dataSet)) {
-    return true;
+  //Load the Buffers!
+  if (pushTemp(temperature) && pushHumid(humidity) && pushPress(pressure)) {
+    debugOutput("INFO: loaded records");
+    status = true;
   }
-  return false;
+  return status;
 }
 
+// Build a JSON record to send to Elasticsearch
 boolean sendData() {
   int httpCode = 0;
-  String dataSet = "";
-  if (storageBuffer.lockedPop(dataSet) && httpCode >= 0)
-  {
+  float temp = popTemp();
+  float pressure = popPress();
+  float humidity =  popHumid();
+  // Make sure we can retrieve the datapoints
+  if ((temp != -1.0) && (humidity != -1.0) && (pressure != -1.0 ) && httpCode >= 0) {
     http.begin(url);
     http.addHeader("Content-Type", "application/json");
+    // Build the dataset to send
+    String dataSet = "{\"@timestamp\":";
+    dataSet += (String)time(NULL);
+    dataSet += ",\"pressure\":";
+    dataSet += (String)pressure;
+    dataSet += ",\"temperature\":";
+    dataSet += (String)temp;
+    dataSet += ",\"humidity\":";
+    dataSet += (String)humidity;
+    dataSet += ",\"freeHeap\":";
+    dataSet += (String)(ESP.getFreeHeap() / 1000);
+    dataSet += ",\"upTime\":";
+    dataSet += (String)upTime;
+    dataSet += ",\"sensorName\":\"";
     dataSet += (String)iotWebConf.getThingName();
     dataSet += "\",\"firmwareVersion\":\"";
     dataSet += (String)CONFIG_VERSION_NAME;
@@ -255,10 +267,12 @@ boolean sendData() {
     dataSet += "\"}";
     httpCode = http.POST(dataSet);
     if (httpCode > 200 && httpCode < 299) {
-      debugOutput("INFO: waiting:" + (String)storageBuffer.size() + " status:" + (String)httpCode + " dataset: " + dataSet);
+      debugOutput("INFO: waiting:" + (String)pressBuffer.size() + " status:" + (String)httpCode + " dataset: " + dataSet);
       http.end();
     } else {
-      rollingStorageBuffer(dataSet);
+      pushTemp(temp);
+      pushHumid(humidity);
+      pushPress(pressure);
       debugOutput("ERROR:" + (String)httpCode + ":" + http.errorToString(httpCode).c_str());
       http.end();
       return false;
@@ -267,21 +281,71 @@ boolean sendData() {
   return true;
 }
 
+
 boolean rollingLogBuffer(String line) {
   String throwAway = "";
-  if (logBuffer.isFull()){
+  if (logBuffer.isFull()) {
     logBuffer.lockedPop(throwAway);
   }
   return logBuffer.lockedPush(line);
 }
 
-boolean rollingStorageBuffer(String line) {
-  String throwAway = "";
-  if (storageBuffer.isFull()){
-    storageBuffer.lockedPop(throwAway);
+// Load a float pressure reading
+
+boolean pushPress(float value) {
+  float throwAway = 0;
+  if (pressBuffer.isFull()) {
+    pressBuffer.lockedPop(throwAway);
   }
-  return storageBuffer.lockedPush(line);
+  return pressBuffer.lockedPush(value);
 }
+
+// Get a float pressure reading
+float popPress() {
+  float value = 0;
+  if (!pressBuffer.lockedPop(value)) {
+    return -1.0;
+  }
+  return value;
+}
+
+// Load a float humidity reading
+boolean pushHumid(float value) {
+  float throwAway = 0;
+  if (humidBuffer.isFull()) {
+    humidBuffer.lockedPop(throwAway);
+  }
+  return humidBuffer.lockedPush(value);
+}
+
+// Get a float humidity reading
+float popHumid() {
+  float value = 0;
+  if (!humidBuffer.lockedPop(value)) {
+    return -1.0;
+  }
+  return value;
+}
+
+// Load a float temperature reading
+boolean pushTemp(float value) {
+  float throwAway = 0;
+  if (tempBuffer.isFull()) {
+    tempBuffer.lockedPop(throwAway);
+  }
+  return tempBuffer.lockedPush(value);
+}
+
+float popTemp() {
+  float value = 0;
+  if (!tempBuffer.lockedPop(value)) {
+    return -1.0;
+  }
+  return value;
+}
+
+
+
 
 void handleReboot()
 {
@@ -313,7 +377,7 @@ void handleRoot()
   s += "<h2>Uptime:";
   s += (String)upTime;
   s += "<h2>Free Heap:";
-  s += (String)(ESP.getFreeHeap()/1000);
+  s += (String)(ESP.getFreeHeap() / 1000);
   s += "</h2><h2>Current Settings</h2>";
   s += "<ul>";
   s += "<p>";
@@ -337,8 +401,8 @@ void handleRoot()
   s += "Click <a href='config'>Configure</a> to setup this unit.<br>";
   s += "Click <a href='reboot'>Reboot</a> to reboot this unit.<br>";
   s += "<p><i>Connect pin " + (String) CONFIG_PIN + " to GND and Reset the board to reset the Configuration AP password to: " + (String)wifiInitialApPassword + "</i>";
-  s += "<p>Offline storageBuffer Records in Storage:";
-  s += storageBuffer.size();
+  s += "<p>Records in Storage:";
+  s += pressBuffer.size();
   s += "<p>Last ";
   s += (String)logBuffer.size();
   s += " loglines:<br><code>";
