@@ -1,5 +1,5 @@
 // iot-collector-elasticsearch.ino - Richie Jarvis - richie@helkit.com
-// Version: v1.0.0 - 2020-02-26
+// Version: v1.0.1 - 2020-03-09
 // Github: https://github.com/richiejarvis/iot-collector-elasticsearch
 // Version History
 // v0.0.1 - Initial Release
@@ -18,11 +18,16 @@
 //          Reversed log display in webpage
 //          Improved time storage to properly use time.h :)
 //          Added Heap size to metrics stored...
+// v1.0.1 - Removed delay time to allow easier wifi access
+//          Config Reset!
+//          5 minutes of buffer, and better workflow during connection failures
+//          Changed freeHeap to kB 
+
 
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
-#define CONFIG_VERSION "014"
-#define CONFIG_VERSION_NAME "v1.0.0"
+#define CONFIG_VERSION "017"
+#define CONFIG_VERSION_NAME "v1.0.1"
 
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
@@ -34,10 +39,8 @@
 #include <HTTPClient.h>
 #include <RingBuf.h>
 
-
-
 // IotWebConf max lengths
-#define STRING_LEN 50
+#define STRING_LEN 255
 #define NUMBER_LEN 32
 // IotWebConf -- When CONFIG_PIN is pulled to ground on startup, the Thing will use the initial
 //      password to build an AP. (E.g. in case of lost password)
@@ -76,10 +79,9 @@ char envForm[STRING_LEN] = "indoor";
 
 long nextNtpTime = 0;
 long prevTime = 0;
-String errorState = "NONE";
 // Store data that is not sent for later delivery
-RingBuf<String, 100> storageBuffer;
-// Log store - only need 100 lines
+RingBuf<String, 300> storageBuffer;
+// Log store
 RingBuf<String, 20> logBuffer;
 
 long upTime = 0;
@@ -121,8 +123,20 @@ void setup() {
   iotWebConf.addParameter(&lngValue);
   iotWebConf.addParameter(&environment);
   iotWebConf.setConfigSavedCallback(&configSaved);
+  iotWebConf.setupUpdateServer(&httpUpdater);
   iotWebConf.setFormValidator(&formValidator);
   iotWebConf.getApTimeoutParameter()->visible = true;
+
+  // IotWebConf initialise
+  iotWebConf.init();
+  // IotWebConf -- Set up required URL handlers on the web server.
+  server.on("/", handleRoot);
+  server.on("/config", [] { iotWebConf.handleConfig(); });
+  server.on("/reboot", handleReboot);
+  server.onNotFound([]() {
+    iotWebConf.handleNotFound();
+  });
+
   /* Initialise the sensor */
   // This part tries I2C address 0x77 first, and then falls back to using 0x76.
   // If there is no I2C data with these addresses on the bus, then it reports a Fatal error, and stops
@@ -137,44 +151,16 @@ void setup() {
   bme_temp->printSensorDetails();
   bme_pressure->printSensorDetails();
   bme_humidity->printSensorDetails();
-  // Start the http update facility
-  iotWebConf.setupUpdateServer(&httpUpdater);
-  // IotWebConf initialise
-  iotWebConf.init();
-  // IotWebConf -- Set up required URL handlers on the web server.
-  server.on("/", handleRoot);
-  server.on("/config", [] { iotWebConf.handleConfig(); });
-  server.on("/reboot", handleReboot);
-  server.onNotFound([]() {
-    iotWebConf.handleNotFound();
-  });
   buildUrl();
   upTime = millis() / 1000;
-  // Start a sample
-
   debugOutput("INFO: Initialisation completed");
 }
 
-void buildUrl() {
-  // Build the URL to send the JSON structure to
-  url = elasticPrefixForm;
-  url += elasticUsernameForm;
-  url += ":";
-  url += elasticPassForm;
-  url += "@";
-  url += elasticHostForm;
-  url += ":";
-  url += elasticPortForm;
-  url += "/";
-  url += elasticIndexForm;
-  url += "/_doc";
-}
 
 //  This is where we do stuff again and again...
 void loop() {
   upTime = millis() / 1000;
   iotWebConf.doLoop();
-
   // Get the real time via NTP for the first time
   // Or when the refresh timer expires
   // Don't try if not connected
@@ -189,27 +175,29 @@ void loop() {
       nextNtpTime = upTime + 600 ;
     }
   }
-
+  // The meat of the reading and sending is here
   if (nextNtpTime > 0 && prevTime != upTime) {
-    sample();
-  }
-  if (isConnected()) {
-    sendData();
+    storeSample();
+    if (isConnected()) {
+      if (sendData()) {
+        delay(20);
+        sendData();
+      }
+    }
   }
   prevTime = upTime;
-
-  delay(50);
-
 }
-
-
 
 
 boolean isConnected() {
-  return (iotWebConf.getState() == 4);
+  if (iotWebConf.getState() == 4) {
+    return true;
+  }
+  return false;
 }
 
-void sample() {
+
+boolean storeSample() {
   sensors_event_t temp_event, pressure_event, humidity_event;
   bme_temp->getEvent(&temp_event);
   bme_pressure->getEvent(&pressure_event);
@@ -220,14 +208,15 @@ void sample() {
   float pressure = pressure_event.pressure;
   // Store whether the sensor was connected
   // Sanity check to make sure we are not underwater, or in space!
-  if (temperature < -40.00) {
-    errorState = "ERROR: TEMPERATURE SENSOR MISREAD";
-    if (pressure > 1100.00) {
-      errorState = "ERROR: PRESSURE SENSOR MISREAD";
+  if (temperature < -40.00 || temperature > 60) {
+    debugOutput("ERROR: Sensor Failure");
+    if (pressure > 1100.00 || pressure < 300.00) {
+      debugOutput("ERROR: Sensor Failure");
     }
+    return false;
   }
   // Build the dataset to send
-  String dataSet = " {\"@timestamp\":";
+  String dataSet = "{\"@timestamp\":";
   dataSet += (String)time(NULL);
   dataSet += ",\"pressure\":";
   dataSet += (String)pressure;
@@ -236,55 +225,62 @@ void sample() {
   dataSet += ",\"humidity\":";
   dataSet += (String)humidity;
   dataSet += ",\"freeHeap\":";
-  dataSet += (String)ESP.getFreeHeap();
+  dataSet += (String)(ESP.getFreeHeap()/1000);
   dataSet += ",\"upTime\":";
   dataSet += (String)upTime;
-  dataSet += ",\"errorState\": \"";
-  dataSet += (String)errorState;
-  dataSet += "\",\"sensorName\":\"";
-  dataSet += (String)iotWebConf.getThingName();
-  dataSet += "\",\"firmwareVersion\":\"";
-  dataSet += (String)CONFIG_VERSION_NAME;
-  dataSet += "\",\"environment\":\"";
-  dataSet += (String)envForm;
-  dataSet += "\",\"location\":\"";
-  dataSet += (String)latForm;
-  dataSet += ",";
-  dataSet += (String)lngForm;
-  dataSet += "\"";
-  dataSet += "}";
-  debugOutput("INFO: waiting:" + (String)storageBuffer.size() + ":" + dataSet);
-  storageBuffer.lockedPush(dataSet);
+  dataSet += ",\"sensorName\":\"";
+  if (rollingStorageBuffer(dataSet)) {
+    return true;
+  }
+  return false;
 }
 
-void sendData() {
+boolean sendData() {
   int httpCode = 0;
   String dataSet = "";
-  if (storageBuffer.lockedPop(dataSet) && isConnected() && httpCode >= 0)
+  if (storageBuffer.lockedPop(dataSet) && httpCode >= 0)
   {
-
-    http.setTimeout(1000);
     http.begin(url);
     http.addHeader("Content-Type", "application/json");
+    dataSet += (String)iotWebConf.getThingName();
+    dataSet += "\",\"firmwareVersion\":\"";
+    dataSet += (String)CONFIG_VERSION_NAME;
+    dataSet += "\",\"environment\":\"";
+    dataSet += (String)envForm;
+    dataSet += "\",\"location\":\"";
+    dataSet += (String)latForm;
+    dataSet += ",";
+    dataSet += (String)lngForm;
+    dataSet += "\"}";
     httpCode = http.POST(dataSet);
     if (httpCode > 200 && httpCode < 299) {
       debugOutput("INFO: waiting:" + (String)storageBuffer.size() + " status:" + (String)httpCode + " dataset: " + dataSet);
+      http.end();
     } else {
-      storageBuffer.lockedPush(dataSet);
+      rollingStorageBuffer(dataSet);
       debugOutput("ERROR:" + (String)httpCode + ":" + http.errorToString(httpCode).c_str());
+      http.end();
+      return false;
     }
-    http.end();
   }
+  return true;
 }
 
-void rollingLogBuffer(String line) {
-  if (logBuffer.isFull()) {
-    String throwAway = "";
+boolean rollingLogBuffer(String line) {
+  String throwAway = "";
+  if (logBuffer.isFull()){
     logBuffer.lockedPop(throwAway);
   }
   logBuffer.lockedPush(line);
 }
 
+boolean rollingStorageBuffer(String line) {
+  String throwAway = "";
+  if (storageBuffer.isFull()){
+    storageBuffer.lockedPop(throwAway);
+  }
+  storageBuffer.lockedPush(line);
+}
 
 void handleReboot()
 {
@@ -316,7 +312,7 @@ void handleRoot()
   s += "<h2>Uptime:";
   s += (String)upTime;
   s += "<h2>Free Heap:";
-  s += (String)ESP.getFreeHeap();
+  s += (String)(ESP.getFreeHeap()/1000);
   s += "</h2><h2>Current Settings</h2>";
   s += "<ul>";
   s += "<p>";
@@ -358,6 +354,7 @@ void configSaved()
 {
   buildUrl();
   debugOutput("INFO: Configuration was updated.");
+  handleReboot();
 }
 
 bool formValidator()
@@ -381,4 +378,19 @@ void debugOutput(String textToSend)
   String text = "t:" + (String)upTime + ":m:" + (String)ESP.getFreeHeap() + ":" + textToSend;
   Serial.println(text);
   rollingLogBuffer(text);
+}
+
+void buildUrl() {
+  // Build the URL to send the JSON structure to
+  url = elasticPrefixForm;
+  url += elasticUsernameForm;
+  url += ":";
+  url += elasticPassForm;
+  url += "@";
+  url += elasticHostForm;
+  url += ":";
+  url += elasticPortForm;
+  url += "/";
+  url += elasticIndexForm;
+  url += "/_doc";
 }
