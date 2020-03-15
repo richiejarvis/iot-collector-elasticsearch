@@ -1,5 +1,5 @@
 // iot-collector-elasticsearch.ino - Richie Jarvis - richie@helkit.com
-// Version: v1.0.1 - 2020-03-09
+// Version: v1.1.0 - 2020-03-15
 // Github: https://github.com/richiejarvis/iot-collector-elasticsearch
 // Version History
 // v0.0.1 - Initial Release
@@ -22,12 +22,13 @@
 //          Config Reset!
 //          5 minutes of buffer, and better workflow during connection failures
 //          Changed freeHeap to kB 
-
+// v1.1.0 - Averaging of readings
+//          Reduce offline storage size to give more datapoints.
 
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "017"
-#define CONFIG_VERSION_NAME "v1.0.1"
+#define CONFIG_VERSION_NAME "v1.1.0a"
 
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
