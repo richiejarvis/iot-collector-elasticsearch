@@ -22,13 +22,13 @@
 //          Config Reset!
 //          5 minutes of buffer, and better workflow during connection failures
 //          Changed freeHeap to kB
-// v1.1.0 - Averaging of readings
+// v1.1.0 - Averaging of last 10 readings
 //          Reduce offline storage size to give more datapoints.
 
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "017"
-#define CONFIG_VERSION_NAME "v1.1.0b"
+#define CONFIG_VERSION_NAME "v1.1.0c"
 
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
@@ -182,16 +182,20 @@ void loop() {
     }
   }
   // The meat of the reading and sending is here
-  if (nextNtpTime > 0 && prevTime != upTime) {
-    if (storeSample()) {
-      if (isConnected()) {
-        if (sendData()) {
-          delay(20);
-          sendData();
-        }
+  if (nextNtpTime > 0)  {
+    delay(10);
+    storeSample();
+  }
+  if (prevTime != upTime)) {
+    if (isConnected()) {
+      if (sendData()) {
+        delay(20);
+        sendData();
       }
     }
   }
+
+
   prevTime = upTime;
 }
 
@@ -225,18 +229,55 @@ boolean storeSample() {
   }
   //Load the Buffers!
   if (pushTemp(temperature) && pushHumid(humidity) && pushPress(pressure)) {
-    debugOutput("INFO: loaded records");
     status = true;
   }
   return status;
 }
 
+float getAverageHumidity() {
+  int stackSize = humidBuffer.size();
+  float averageValue = -1.0;
+  if (stackSize >= 10) {
+    for (int count = stackSize - 1 ; count >= (stackSize - 10)  || count == 0 ; count--) {
+      averageValue += humidBuffer[(count)];
+      Serial.print((String)averageValue + " ! ");
+    }
+    averageValue = averageValue / (float)10.0;
+    Serial.print(" # " + (String)averageValue + " # ");
+  }
+  return averageValue;
+}
+
+float getAveragePressure() {
+  int stackSize = pressBuffer.size();
+  float averageValue = -1.0;
+  if (stackSize >= 10) {
+    for (int count = stackSize - 1 ; count >= (stackSize - 10)  || count == 0 ; count--) {
+      averageValue += pressBuffer[(count)];
+    }
+    averageValue = averageValue / (float)10.0;
+  }
+  return averageValue;
+}
+
+float getAverageTemp() {
+  int stackSize = tempBuffer.size();
+  float averageValue = -1.0;
+  if (stackSize >= 10) {
+    for (int count = stackSize - 1 ; count >= (stackSize - 10)  || count == 0 ; count--) {
+      averageValue += tempBuffer[(count)];
+    }
+    averageValue = averageValue / (float)10.0;
+  }
+  return averageValue;
+}
+
 // Build a JSON record to send to Elasticsearch
 boolean sendData() {
   int httpCode = 0;
-  float temp = popTemp();
-  float pressure = popPress();
-  float humidity =  popHumid();
+  float temp = getAverageTemp();
+  float pressure = getAveragePressure();
+  float humidity =  getAverageHumidity();
   // Make sure we can retrieve the datapoints
   if ((temp != -1.0) && (humidity != -1.0) && (pressure != -1.0 ) && httpCode >= 0) {
     http.begin(url);
@@ -300,15 +341,6 @@ boolean pushPress(float value) {
   return pressBuffer.lockedPush(value);
 }
 
-// Get a float pressure reading
-float popPress() {
-  float value = 0;
-  if (!pressBuffer.lockedPop(value)) {
-    return -1.0;
-  }
-  return value;
-}
-
 // Load a float humidity reading
 boolean pushHumid(float value) {
   float throwAway = 0;
@@ -316,15 +348,6 @@ boolean pushHumid(float value) {
     humidBuffer.lockedPop(throwAway);
   }
   return humidBuffer.lockedPush(value);
-}
-
-// Get a float humidity reading
-float popHumid() {
-  float value = 0;
-  if (!humidBuffer.lockedPop(value)) {
-    return -1.0;
-  }
-  return value;
 }
 
 // Load a float temperature reading
@@ -335,17 +358,6 @@ boolean pushTemp(float value) {
   }
   return tempBuffer.lockedPush(value);
 }
-
-float popTemp() {
-  float value = 0;
-  if (!tempBuffer.lockedPop(value)) {
-    return -1.0;
-  }
-  return value;
-}
-
-
-
 
 void handleReboot()
 {
