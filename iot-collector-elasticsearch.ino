@@ -271,7 +271,7 @@ boolean rollingLogBuffer(String line) {
   if (logBuffer.isFull()){
     logBuffer.lockedPop(throwAway);
   }
-  logBuffer.lockedPush(line);
+  return logBuffer.lockedPush(line);
 }
 
 boolean rollingStorageBuffer(String line) {
@@ -279,7 +279,7 @@ boolean rollingStorageBuffer(String line) {
   if (storageBuffer.isFull()){
     storageBuffer.lockedPop(throwAway);
   }
-  storageBuffer.lockedPush(line);
+  return storageBuffer.lockedPush(line);
 }
 
 void handleReboot()
