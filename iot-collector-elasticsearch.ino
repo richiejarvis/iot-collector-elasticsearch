@@ -20,12 +20,14 @@
 //          Added Heap size to metrics stored...
 // v1.0.1 - Removed delay time to allow easier wifi access
 //          Config Reset!
+//          5 minutes of buffer, and better workflow during connection failures
+//          Changed freeHeap to kB 
 
 
 // Store the IotWebConf config version.  Changing this forces IotWebConf to ignore previous settings
 // A useful alternative to the Pin 12 to GND reset
 #define CONFIG_VERSION "017"
-#define CONFIG_VERSION_NAME "v1.0.1m"
+#define CONFIG_VERSION_NAME "v1.0.1"
 
 #include <IotWebConf.h>
 #include <Adafruit_Sensor.h>
@@ -78,7 +80,7 @@ char envForm[STRING_LEN] = "indoor";
 long nextNtpTime = 0;
 long prevTime = 0;
 // Store data that is not sent for later delivery
-RingBuf<String, 600> storageBuffer;
+RingBuf<String, 300> storageBuffer;
 // Log store
 RingBuf<String, 20> logBuffer;
 
@@ -184,7 +186,6 @@ void loop() {
     }
   }
   prevTime = upTime;
-  delay(20);
 }
 
 
@@ -228,7 +229,7 @@ boolean storeSample() {
   dataSet += ",\"upTime\":";
   dataSet += (String)upTime;
   dataSet += ",\"sensorName\":\"";
-  if (storageBuffer.lockedPush(dataSet)) {
+  if (rollingStorageBuffer(dataSet)) {
     return true;
   }
   return false;
@@ -265,7 +266,7 @@ boolean sendData() {
   return true;
 }
 
-void rollingLogBuffer(String line) {
+boolean rollingLogBuffer(String line) {
   String throwAway = "";
   if (logBuffer.isFull()){
     logBuffer.lockedPop(throwAway);
@@ -273,7 +274,7 @@ void rollingLogBuffer(String line) {
   logBuffer.lockedPush(line);
 }
 
-void rollingStorageBuffer(String line) {
+boolean rollingStorageBuffer(String line) {
   String throwAway = "";
   if (storageBuffer.isFull()){
     storageBuffer.lockedPop(throwAway);
