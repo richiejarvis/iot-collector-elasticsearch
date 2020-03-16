@@ -5,13 +5,14 @@ __Author:__ Richie Jarvis - richie@helkit.com
 
 * [Description](#description)
 * [Features](#features)
-* [Template](#template)
-* [Ingest Pipeline](#ingest-pipeline)
-* [Index Lifecycle Management](#index-lifecycle-management)
 * [Version History](#version-history)
 * [Feature Details](#feature-details)
   + [Internet Outage Buffer](#internet-outage-buffer)
   + [Logging on the Webpage](#logging-on-the-webpage)
+* [Elasticsearch Setup](#elasticsearch-setup)
+  + [Template](#template)
+  + [Ingest Pipeline](#ingest-pipeline)
+  + [Index Lifecycle Management](#index-lifecycle-management)
 
 <small><i><a href='http://ecotrust-canada.github.io/markdown-toc/'>Table of contents generated with markdown-toc</a></i></small>
 
@@ -51,7 +52,39 @@ A simple ESP32 compatible piece of code to read BME280 or BMP280 sensor data, an
 6. 300 reading buffer
 7. IotWebConf (https://github.com/prampec/IotWebConf) configuration in flash memory
 
-## Template
+
+## Version History
+* v0.0.1 - Initial Release
+* v0.0.2 - Added ES params
+* v0.0.3 - I2C address change tolerance & lat/long
+* v0.0.4 - SSL support
+* v0.1.0 - Display all the variables
+* v0.1.1 - Store seconds since epoch, and increment as time passes to reduce ntp call
+* v0.1.2 - Fix reset issue (oops! Connecting Pin 12 and GND does not reset AP password).
+         Added indoor/outdoor parameter.
+         Added Fahrenheit conversion.
+* v0.1.3 - Changed the schema slightly and added a Buffer for the data, and logging to the webpage
+* v1.0.0 - Initial working version with connection outage buffer
+* v1.0.1 - Fixed a lot of bugs, changed freeHeap to Kilo Bytes, Reset config
+
+## Feature Details
+### Internet Outage Buffer
+The idea was to have a way to store short outages.  300 readings are stored in v1.0.1.  Future versions will remove the "cruft" that I am storing currently to increase capacity.
+
+This is the console output during an outage:
+![console1](https://user-images.githubusercontent.com/900210/74748883-2720fc80-5261-11ea-8872-bc12d5c321b1.png)
+When the WiFi disconnects, the unit begins to store each reading.  After the deepskyblack WiFi AP had rebooted, after a short delay the WeatherSensor automatically reconnects, and sends the stored data into Elasticsearch.
+![console2](https://user-images.githubusercontent.com/900210/74749026-64858a00-5261-11ea-8aba-18154734d947.png)
+Once the store is empty, everything goes back to normal.
+![console3](https://user-images.githubusercontent.com/900210/74749043-6fd8b580-5261-11ea-9dbc-b2879aed0308.png)
+
+### Logging on the Webpage
+I wanted to make the webpage more user-friendly, and report on the current status.  Here it is:
+
+
+# Elasticsearch Setup
+## Data Storage Cluster
+### Template
 Elasticsearch will normally detect these datatypes, however, if you wish to create a template, here is what I use:
 
 ```
@@ -137,6 +170,7 @@ PUT _template/weathersensor_template
   }
 }
 ```
+
 ## Ingest Pipeline
 I am using an Ingest Pipeline:
 
@@ -189,36 +223,16 @@ PUT _ilm/policy/weather-ilm
 }
 ```
 
-## Version History
-* v0.0.1 - Initial Release
-* v0.0.2 - Added ES params
-* v0.0.3 - I2C address change tolerance & lat/long
-* v0.0.4 - SSL support
-* v0.1.0 - Display all the variables
-* v0.1.1 - Store seconds since epoch, and increment as time passes to reduce ntp call
-* v0.1.2 - Fix reset issue (oops! Connecting Pin 12 and GND does not reset AP password).
-         Added indoor/outdoor parameter.
-         Added Fahrenheit conversion.
-* v0.1.3 - Changed the schema slightly and added a Buffer for the data, and logging to the webpage
-* v1.0.0 - Initial working version with connection outage buffer
-* v1.0.1 - Fixed a lot of bugs, changed freeHeap to Kilo Bytes, Reset config
+### Alerts/Watcher
+tbc
 
-## Feature Details
-### Internet Outage Buffer
-The idea was to have a way to store short outages.  300 readings are stored in v1.0.1.  Future versions will remove the "cruft" that I am storing currently to increase capacity.
+### Machine Learning
+tbc
 
-This is the console output during an outage:
-![console1](https://user-images.githubusercontent.com/900210/74748883-2720fc80-5261-11ea-8872-bc12d5c321b1.png)
-When the WiFi disconnects, the unit begins to store each reading.  After the deepskyblack WiFi AP had rebooted, after a short delay the WeatherSensor automatically reconnects, and sends the stored data into Elasticsearch.
-![console2](https://user-images.githubusercontent.com/900210/74749026-64858a00-5261-11ea-8aba-18154734d947.png)
-Once the store is empty, everything goes back to normal.
-![console3](https://user-images.githubusercontent.com/900210/74749043-6fd8b580-5261-11ea-9dbc-b2879aed0308.png)
+## Monitoring Cluster
+The intention is to expand this section with ready-to-go REST calls to keep a Monitoring Cluster tidy.
 
-### Logging on the Webpage
-I wanted to make the webpage more user-friendly, and report on the current status.  Here it is:
+## Monitoring Cluster
+* Index Lifecycle Management for System Indices
 
-
-
-
-
-
+* Alerts/Watcher
