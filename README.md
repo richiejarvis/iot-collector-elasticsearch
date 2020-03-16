@@ -1,7 +1,25 @@
 # WeatherSensor
 __Author:__ Richie Jarvis - richie@helkit.com
+
+# Contents
+
+* [Description](#description)
+* [Features](#features)
+* [Template](#template)
+* [Ingest Pipeline](#ingest-pipeline)
+* [Index Lifecycle Management](#index-lifecycle-management)
+* [Version History](#version-history)
+* [Feature Details](#feature-details)
+  + [Internet Outage Buffer](#internet-outage-buffer)
+  + [Logging on the Webpage](#logging-on-the-webpage)
+
+<small><i><a href='http://ecotrust-canada.github.io/markdown-toc/'>Table of contents generated with markdown-toc</a></i></small>
+
+
+
+
 ## Description
-A simple ESP8266 or ESP32 compatible piece of code to read a BME280 sensor data, and send via wifi to an Elastic Stack.
+A simple ESP32 compatible piece of code to read BME280 or BMP280 sensor data, and send via wifi to an Elastic Stack.  Other sensors may be added later on, in fact, that is the plan.
 
 ![Wiring Diagram](https://github.com/richiejarvis/iotprojects/blob/master/WeatherSensor/ESP32-BME280.png)
 
