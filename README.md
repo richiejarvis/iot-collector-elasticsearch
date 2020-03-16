@@ -119,7 +119,7 @@ PUT _template/weathersensor_template
   }
 }
 ```
-
+## Ingest Pipeline
 I am using an Ingest Pipeline:
 
 ```
@@ -146,10 +146,11 @@ PUT _ingest/pipeline/weathersensor-add-fields2
 }
 ```
 
-and ILM:
+## Index Lifecycle Management
+These are my current recommended settings for my dataset.  Note that I am not using the recommended maximum store for performance reasons.  I am working on investigating how to optimise Elasticsearch further for my dataset, in fact, that is my day-job!
 
 ```
-PUT _ilm/policy/weather-ilm2
+PUT _ilm/policy/weather-ilm
 {
   "policy": {
     "phases": {
