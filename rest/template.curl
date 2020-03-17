@@ -1,0 +1,2 @@
+curl -o templates.json -XGET "https://richie:W3twindy!@b285b6f9e4a8452dad1b62c029c74bf1.europe-west2.gcp.elastic-cloud.com:9243/_template/.*"
+

@@ -1,0 +1,163 @@
+GET _cat/shards?v&s=index,node
+GET _ilm/policy
+GET _cat/aliases?v&s=alias
+
+GET _template/.monitoring-es
+GET _template/apm-7.6.1
+GET _template/.ml-inference-*
+GET _template/.watches
+GET _template/.*
+# No Index
+GET .cloud-hot-warm-allocation*
+GET .ml*
+GET .monitoring-logstash*
+GET .logstash-management*
+GET .transform-internal*
+GET .management-beats*
+GET .transform-notifications*
+# No ILM should be used
+GET .triggered_watches*
+GET .watch-history*
+# Found These
+GET .monitoring-kibana*/_ilm/explain
+GET .monitoring-beats*/_ilm/explain
+GET .watcher-history*/_ilm/explain
+GET .monitoring-es*/_ilm/explain
+# Load ILM to .system indices
+PUT .monitoring-es*/_settings
+{ "index.lifecycle.name": "System_ILM_Policy" }
+PUT .watcher-history*/_settings
+{ "index.lifecycle.name": "System_ILM_Policy" }
+PUT .monitoring-es*/_settings
+{ "index.lifecycle.name": "System_ILM_Policy" }
+PUT .monitoring-beats-*/_settings
+{ "index.lifecycle.name": "System_ILM_Policy" }
+
+
+POST _template/.monitoring-es*
+{
+  "index.lifecycle.name": "System_ILM_Policy"
+}
+
+
+
+POST  _template/.monitoring*
+{
+  "index.lifecycle.name": "System_ILM_Policy"
+}
+
+
+PUT _ilm/policy/System_ILM_Policy
+{
+  "policy": {
+    "phases": {
+      "hot": {
+        "min_age": "0ms",
+        "actions": {
+          "rollover": {
+            "max_size": "50gb"
+          },
+          "set_priority": {
+            "priority": 100
+          }
+        }
+      },
+      "warm": {
+        "actions": {
+          "allocate": {
+            "number_of_replicas": 1,
+            "include": {},
+            "exclude": {}
+          },
+          "shrink": {
+            "number_of_shards": 1
+          },
+          "forcemerge": {
+            "max_num_segments": 10
+          },
+          "set_priority": {
+            "priority": 50
+          }
+        }
+      },
+      "cold": {
+        "min_age": "5d",
+        "actions": {
+          "freeze": {},
+          "set_priority": {
+            "priority": 0
+          }
+        }
+      },
+      "delete": {
+        "min_age": "7d",
+        "actions": {
+          "delete": {}
+        }
+      }
+    }
+  }
+}
+PUT _ilm/policy/APM_ILM_Policy
+{
+  "policy": {
+    "phases": {
+      "hot": {
+        "min_age": "0ms",
+        "actions": {
+          "rollover": {
+            "max_size": "50gb"
+          },
+          "set_priority": {
+            "priority": 100
+          }
+        }
+      },
+      "warm": {
+        "actions": {
+          "allocate": {
+            "number_of_replicas": 1,
+            "include": {},
+            "exclude": {}
+          },
+          "shrink": {
+            "number_of_shards": 1
+          },
+          "forcemerge": {
+            "max_num_segments": 10
+          },
+          "set_priority": {
+            "priority": 50
+          }
+        }
+      },
+      "cold": {
+        "min_age": "5d",
+        "actions": {
+          "freeze": {},
+          "set_priority": {
+            "priority": 0
+          }
+        }
+      },
+      "delete": {
+        "min_age": "7d",
+        "actions": {
+          "delete": {}
+        }
+      }
+    }
+  }
+}
+
+
+PUT apm-*/_settings
+{
+  "index": {
+    "lifecycle": {
+      "name": "APM_ILM_Policy"
+    }
+  }
+}
+
+DELETE _ilm/policy/System_Index_Policy
