@@ -186,7 +186,7 @@ void loop() {
     delay(10);
     storeSample();
   }
-  if (prevTime != upTime)) {
+  if (prevTime != upTime) {
     if (isConnected()) {
       if (sendData()) {
         delay(20);
