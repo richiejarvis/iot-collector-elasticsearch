@@ -111,7 +111,6 @@ PUT _template/weathersensor_template
     }
   },
   "mappings": {
-    "_doc": {
       "_routing": {
         "required": false
       },
@@ -170,8 +169,7 @@ PUT _template/weathersensor_template
           "type": "keyword"
         }
       }
-    }
-  }
+    } 
 }
 ```
 
